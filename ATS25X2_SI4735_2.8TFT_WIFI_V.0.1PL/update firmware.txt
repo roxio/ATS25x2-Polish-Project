@@ -1,0 +1,33 @@
+    Zainstaluj sterownik USB szeregowego z folderu CH341SER
+
+    Zainstaluj Arduino IDE ze strony
+    http://www.arduino.cc
+
+    Dodaj w 'Plik – Preferencje – Dodatkowe menedżery płytek' link
+    https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+
+    Zainstaluj przez Menedżera płytek w Arduino IDE ESP32
+
+    Zainstaluj przez Menedżera bibliotek bibliotekę Si4735 PU2CLR V2.17
+
+    Zainstaluj przez Menedżera bibliotek bibliotekę TFT_eSPI V2.17
+
+    Zastąp w 'ścieżka użytkownika – Dokumenty – Arduino – libraries – TFT_eSPI' dwa pliki z folderu firmware:
+    Setup1_ILI9341.h
+    User_Setup_Select.h
+	
+	Edytuj plik INO i wstaw właściwą nazwę i hasło do wifi w sekcji:
+	String WIFI_SSID = "GUEST";     // SSID of local network
+	String WIFI_PASS = "TEST12345";     // Password on network
+	
+    Otwórz szkic INO w Arduino IDE
+
+    Wybierz 'Narzędzia – Płytka – ESP32 Arduino – ESP32 Dev Module'
+
+    Podłącz swoje urządzenie przez USB
+
+    Wybierz 'Narzędzia – Port – COMxx' xx – numer portu Twojego urządzenia
+
+    Kliknij 'Szkic – Wyślij'
+
+Gratulacje! ATS25X2 zaktualizowany.
