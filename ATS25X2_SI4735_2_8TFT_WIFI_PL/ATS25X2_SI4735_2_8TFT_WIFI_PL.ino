@@ -1,93 +1,10 @@
 
-//  V.0.1PL  24.07.2026 REBRANDING - POLISH PROJECT ATS25X2;
-
-//  V.5.3b  17.09.2022 Added Squelch Function, updated By  Lyle Hancoch Sr. from USA;
-//  V.5.3a  27.08.2022 Date & Time  via WI-FI & charge initial screen updated By  Emphi Erte from Indonesia;
-//  V.5.2a  15.05.2022 Fully RDS services - RDS Station  name - RDS News & info - RDS Time station Mod.by IU4ALH ;
-//                     led colors on S-Meter bar
-
-//  V4.0    23-02-2022 Binns MOD full rebuilding design and functionaly. See owerview on youtube channel:
-//  V3.4    24-11-2021 Bug support.
-//  V3.4    24-11-2021 Memory added for BFO in each band when crystal is in use.
-//  V3.3    02-11-2021
-//  V3.2.6b 29-10-2021  5351 calibration
-//  V3.2.4  03-10-2021 100 Hz & 10 Hz added in SSB. Many changes in control interface. Bug support.
-//                    SI5351 added, replacing crystal and also used as BFO. All steps and bandwidth per modulation
-//                    are now stored in memory.
-//  V3.2.3  29-09-2021 Added Sprite buttons from Jim Yasuda.
-//  This sketch is based on the si4735 Library of Ricardo PU2CLR. Thanks for the very nice work.
-
-//  This sketch uses  a 2.8 inch 240*320 touch-screen with ILI9341, ESP32 WROOM-32 and Rotary Encoder.
-//  The radio is fully controlled by the (Touch)Screen and Rotary Encoder
-//  This sketch uses the Rotary Encoder Class implementation from Ben Buxton (the source code is included
-//  together with this sketch).
-//  For the touch-screen the library TFT_eSPI is used. The configuration setup-file: setup1_ILI9341 is also
-//  included.
-//  Also a schematic drawing is available.
-
-//  ABOUT SSB PATCH:
-//  First of all, it is important to say that the SSB patch content is not part of this library. The paches used here were made available by Mr.
-//  Vadim Afonkin on his Dropbox repository. It is important to note that the author of the SI473x library does not encourage anyone to use the SSB patches
-//  content for commercial purposes. In other words, this library only supports SSB patches, the patches themselves are not part of this library.
-//  This sketch will download a SSB patch to your SI4735 device (patch_init.h). It will take about 8KB of the Arduino memory.
-//  In this context, a patch is a piece of software used to change the behavior of the SI4735 device.
-//  There is little information available about patching the SI4735. The following information is the understanding of the author of
-//  this project and it is not necessarily correct. A patch is executed internally (run by internal MCU) of the device.
-//  Usually, patches are used to fixes bugs or add improvements and new features of the firmware installed in the internal ROM of the device.
-//  Patches to the SI4735 are distributed in binary form and have to be transferred to the internal RAM of the device by
-//  the host MCU (in this case Arduino). Since the RAM is volatile memory, the patch stored into the device gets lost when you turn off the system.
-//  Consequently, the content of the patch has to be transferred again to the device each time after turn on the system or reset the device.
-
-//  ATTENTION: The author of this project does not guarantee that procedures shown here will work in your development environment.
-//  Given this, it is at your own risk to continue with the procedures suggested here.
-//  This library works with the I2C communication protocol and it is designed to apply a SSB extension PATCH to CI SI4735-D60.
-//  Once again, the author disclaims any liability for any damage this procedure may cause to your SI4735 or other devices, like an ATS-25 that you are using.
-//  This sketch SHOULD work with the Chinese KIT ATS-25 sold on AliExpress, eBay etc.
-//  The author of this sketch and Arduino Library does not know the seller of this kit and does not have a commercial relationship with any commercial product that uses the Arduino Library.
-//  It is important you understand that there is no guarantee that this sketch will work correctly in your current product.
-//  SO, DO NOT TRY IT IF YOU DON'T KNOW WHAT ARE YOU DOING. YOU MUST BE ABLE TO GO BACK TO THE PREVIOUS VERSION IF THIS SKETCH DOES NOT WORK FOR YOU.
-
-//  Library TFT_eSPI you may download from here : https://github.com/Bodmer/TFT_eSPI
-//  Library Rotary is provided with the program
-//  Library SI4735 you may download from here   : https://github.com/pu2clr/SI4735
-//
-//  *********************************
-//  **   Display connections etc.  **
-//  *********************************
-//  |------------|------------------|------------|------------|------------|
-//  |Display 2.8 |      ESP32       |   Si4735   |  Encoder   |  Beeper    |
-//  |  ILI9341   |                  |            |            |            |        Encoder        1,2,3
-//  |------------|------------------|------------|------------|------------|        Encoder switch 4,5
-//  |   Vcc      |     3V3     | 01 |    Vcc     |            |            |        pin 33 with 18K to 3.3 volt and 18K to ground.
-//  |   GND      |     GND     | 02 |    GND     |     2,4    |            |        pin 32 (Beeper) via 2K to base V1  BC547
-//  |   CS       |     15      | 03 |            |            |            |        Collector via beeper to 5v
-//  |   Reset    |      4      | 04 |            |            |            |        Emmitor to ground
-//  |   D/C      |      2      | 05 |            |            |            |
-//  |   SDI      |     23      | 06 |            |            |            |        Encoder        1,2,3
-//  |   SCK      |     18      | 07 |            |            |            |        Encoder switch 4,5
-//  |   LED Coll.|     14 2K   | 08 |            |            |            |        Display LED
-//  |   SDO      |             | 09 |            |            |            |        Emmitor  V2 BC557 to 3.3 V
-//  |   T_CLK    |     18      | 10 |            |            |            |        Base with 2K to pin 14 (Display_Led)
-//  |   T_CS     |      5      | 11 |            |            |            |        Collector to led pin display
-//  |   T_DIN    |     23      | 12 |            |            |            |
-//  |   T_DO     |     19      | 13 |            |            |            |
-//  |   T_IRQ    |     34      | 14 |            |            |            |
-//  |            |     12      |    |   Reset    |            |            |
-//  |            |     21      |    |    SDA     |            |            |
-//  |            |     22      |    |    SCL     |            |            |
-//  |            |     16      |    |            |      1     |            |
-//  |            |     17      |    |            |      3     |            |
-//  |            |     33      |    |            |      5     |            |
-//  |            |     32 2K   |    |            |            |     In     |
-//  |            |     27 Mute |    |see schematics           |            |
-//  |------------|-------------|----|------------|------------|------------|
-
 #include <WiFi.h>
+#include <WiFiManager.h> 
 #include "time.h"
 
-// Setup
-String WIFI_SSID = "GUEST";     // SSID of local network
-String WIFI_PASS = "TEST12345";     // Password on network
+WiFiManager wifiManager;
+bool wifiConnected = false; 
 
 const char* ntpServer = "0.it.pool.ntp.org"; //"pool.ntp.org";
 const long  gmtOffset_sec =3600 * 2; //25200; 
@@ -395,7 +312,7 @@ bool  presetBank          = false;
 //SETUP
 bool    SETUPbut          = false;
 int     pageSetup         = 0;
-uint8_t maxPageSetup      = 5;
+uint8_t maxPageSetup      = 6;   // ZMIANA: dodano stronę WIFI (było 5)
 //===========================================
 //PRE
 bool      PREtap          = false;
@@ -431,6 +348,11 @@ uint16_t boolOpt;
 bool RDSalways;
 bool seekAccuracy;
 
+// ZMIANA: zmienne strony SETUP "WIFI"
+bool wifiEnable          = true;   // czy WiFi ma być używane przy starcie (trwałe, zapisywane w EEPROM)
+bool wifiConfigureNow    = false;  // sesyjne: dodaj/zmień sieć WiFi bez kasowania obecnej
+bool resetWifiConfig     = false;  // sesyjne: skasuj zapisaną sieć WiFi
+
 bool prevdigitLigth;
 bool prevlangRetroEN;
 bool prevVHFon;
@@ -450,6 +372,9 @@ bool prevscreenV;
 bool prevdisplayPower;
 bool prevRDSalways;
 bool prevseekAccuracy;
+bool prevwifiEnable;
+bool prevwifiConfigureNow;
+bool prevresetWifiConfig;
 //===========================================
 //SCREEN SAVER
 long elapsedSaver = millis();
@@ -793,6 +718,9 @@ struct StoreStruct {
   //V5 by LWH
   byte    chk5;
   int     SquelchVal;			 
+  //V6 - ustawienia WiFi (ATS25X2 PL)
+  byte    chk6;
+  uint8_t wifiEnableAtBoot;
 };
 
 StoreStruct storage = {
@@ -866,6 +794,8 @@ StoreStruct storage = {
   '@',  //V5 or higher build first time check
   0,    // SquelchVal
 // ==========================================  												 
+  '@',  //V6 or higher build first time check
+  1,    // wifiEnableAtBoot (domyślnie WiFi włączone)
 };
 //MEMO BANK===============================================================
 #define offsetMemoEEPROM       248
@@ -974,48 +904,108 @@ void scanOPTunpack() {
 
 //==============================================
 
-void connectWifi() {
-  if (WiFi.status() == WL_CONNECTED) return;
-  //Manual Wifi
-  Serial.printf("Connecting to WiFi %s/%s", WIFI_SSID.c_str(), WIFI_PASS.c_str());
-  WiFi.disconnect();
-  WiFi.mode(WIFI_STA);
-  
-  WiFi.begin(WIFI_SSID.c_str(), WIFI_PASS.c_str());
-  int i = 0;
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    if (i > 80) i = 0;
-    drawProgress(i, "Connecting to WiFi '" + String(WIFI_SSID.c_str()) + "'");
-    i += 10;
-    Serial.print(".");
-  }
-  drawProgress(100, "Connected to WiFi '" + String(WIFI_SSID.c_str()) + "'");
-  Serial.println("connected.");
-  
-//initTime();
-
+// ZMIANA: krótki, czytelny opis stanu WiFi używany na stronie SETUP -> WIFI
+String wifiStatusText() {
+  if (WiFi.status() == WL_CONNECTED) return "Polaczono: " + WiFi.SSID();
+  String saved = WiFi.SSID();          // ESP32 pamięta ostatnio zapisaną sieć nawet gdy jest rozłączone
+  if (saved.length()) return "Zapisano: " + saved + " (offline)";
+  return "Brak zapisanej sieci";
 }
 
+bool connectWifi() {
+  if (WiFi.status() == WL_CONNECTED) return true;
+
+  wifiManager.setConnectTimeout(15);        // maks. 15s próby połączenia z zapisaną siecią
+  wifiManager.setConfigPortalTimeout(120);  // maks. 120s otwarty portal konfiguracyjny, potem dalej offline
+  wifiManager.setBreakAfterConfig(true);
+
+  drawProgress(0, "Laczenie z WiFi...");
+  Serial.println("Connecting to WiFi (WiFiManager)...");
+
+  bool ok = wifiManager.autoConnect("ATS25X2-Setup");  // nazwa awaryjnego punktu dostępowego
+
+  if (ok) {
+    drawProgress(100, "Polaczono: " + WiFi.SSID());
+    Serial.println("WiFi connected: " + WiFi.SSID());
+  } else {
+    drawProgress(100, "Brak WiFi - praca offline");
+    Serial.println("WiFi not connected - continuing offline.");
+  }
+  delay(800);
+  return ok;
+}
+
+void configureWifiNow() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.setCursor(10, 10);
+  tft.println("Konfiguracja WiFi");
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 40);
+  tft.println("Polacz sie z siecią:");
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setCursor(10, 55);
+  tft.println("ATS25X2-Setup");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setCursor(10, 75);
+  tft.println("i wybierz sieś z listy.");
+
+  wifiManager.setConfigPortalTimeout(180);   // 3 minuty na skonfigurowanie
+  bool ok = wifiManager.startConfigPortal("ATS25X2-Setup");
+
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(10, 100);
+  if (ok) {
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.println("Zapisano siec:");
+    tft.setTextSize(1);
+    tft.setCursor(10, 130);
+    tft.println(WiFi.SSID());
+    Serial.println("WiFi (re)configured: " + WiFi.SSID());
+  } else {
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.println("Anulowano / limit czasu");
+    Serial.println("WiFi configuration cancelled/timeout.");
+  }
+  delay(1500);
+
+  // Radio nie potrzebuje WiFi do normalnej pracy - wyłączamy je z powrotem,
+  // by nie zużywało energii (zgodnie z ustawieniem oszczędzania baterii).
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  wifiConnected = false;
+}
+
+
+// wywoływane wcześniej w setup()) - usunięto zduplikowane, blokujące WiFi.begin().
+// Dodano limit prób (maxTries), więc funkcja nie zawiesi się, jeśli serwer NTP nie odpowiada.
 void initTime() {
-  time_t now;
+  time_t now = 0;
 
   tft.fillScreen(TFT_BLACK);
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  int i = 1;
-  //while ((now = time(nullptr)) < NTP_MIN_VALID_EPOCH) {
-WiFi.begin(WIFI_SSID.c_str(), WIFI_PASS.c_str());
-  while (WiFi.status() != WL_CONNECTED) {
-    drawProgress(i * 10, "Updating time...");
+
+  const int maxTries = 20;   // ok. 20 x 300ms = maks. 6 sekund oczekiwania na NTP
+  int i = 0;
+  while ((now = time(nullptr)) < NTP_MIN_VALID_EPOCH and i < maxTries) {
+    drawProgress((i * 100) / maxTries, "Synchronizacja czasu...");
     Serial.print(".");
     delay(300);
     yield();
     i++;
   }
-  drawProgress(100, "Time synchronized");
-  Serial.println();
 
- 
+  if (now >= NTP_MIN_VALID_EPOCH) {
+    drawProgress(100, "Czas zsynchronizowany");
+    Serial.println("Time synchronized.");
+  } else {
+    drawProgress(100, "Brak odpowiedzi serwera NTP");
+    Serial.println("NTP sync failed - continuing without time sync.");
+  }
+  delay(500);
 }
 
 //=======================================================================================
@@ -1076,16 +1066,31 @@ void setup() {
 
   tft.fillScreen(TFT_BLACK);
 
-  connectWifi();
-  initTime();
-  
+  // ZMIANA: wczesny odczyt zapisanej konfiguracji, żeby poznać ustawienie
+  // "WiFi enabled" (storage.wifiEnableAtBoot) zanim podejmiemy próbę łączenia.
+  loadConfig();
+  wifiEnable = (storage.chk6 == '@') ? (bool)storage.wifiEnableAtBoot : true;
+
+  if (wifiEnable) {
+    wifiConnected = connectWifi();
+    if (wifiConnected) {
+      initTime();
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      wifiConnected = false;
+      Serial.println("WiFi disconnected to save power.");
+    }
+  } else {
+    Serial.println("WiFi disabled by user setting - skipping.");
+  }
+
   delay(1500);
   tft.setCursor(20, 10); //(7, 50);
   tft.setTextSize(2);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
 
   Serial.println("     SI4735/32 Radio");
-  Serial.println("Version 5.3b 17-09-2026");
+  Serial.println("Version 0.11PL 25-07-2026");
 
   spr.createSprite(265, 120);
   spr.fillScreen(COLOR_BACKGROUND);
@@ -1095,9 +1100,9 @@ void setup() {
   
   tft.println("SI4735/32  Radio");
   tft.setCursor(7, 33); //(7, 70);
-  tft.println(" Version 5.3b");
+  tft.println(" Version 0.11PL");
   tft.setCursor(7, 56); //(7, 95);
-  tft.println(" 20-07-2026");
+  tft.println(" 25-07-2026");
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setCursor(7, 79); //(7, 120);
   tft.println(" RoX10 PL MOD");
@@ -1244,6 +1249,14 @@ void setup() {
   } else {
     storage.chk5              = '@';
     storage.SquelchVal        = 0;
+  }
+// ===============================================
+  if (storage.chk6 == '@') {
+    wifiEnable = storage.wifiEnableAtBoot;
+  } else {
+    storage.chk6             = '@';
+    storage.wifiEnableAtBoot = 1;
+    wifiEnable                = true;
   }
 // ===============================================
   OPTunpack();
@@ -1414,6 +1427,7 @@ void SaveInEeprom (void* arg)  {
     storage.SCANscale = SCANscale;
     storage.boolOpt = boolOpt;
 	    storage.SquelchVal = currentSquelch;  //LWH
+    storage.wifiEnableAtBoot = wifiEnable;  // ZMIANA
 
     for (unsigned int t = 0; t < sizeof(storage); t++) {
       delay(1);
@@ -3245,6 +3259,9 @@ void loop() {
             prevdisplayPower = displayPower;
             prevRDSalways = RDSalways;
             prevseekAccuracy = seekAccuracy;
+            prevwifiEnable = wifiEnable;          
+            prevwifiConfigureNow = false;         
+            prevresetWifiConfig = false;          
             
             displSETUP();
             ThirdLayer = false;
@@ -5924,6 +5941,13 @@ void displSETUP() {
       displSETUPitem     ("Load default Memo", 80,  prevloadMemory, (loadMemory != prevloadMemory));
       displSETUPitem     ("Reset to factory ", 120, prevloadDefault, (loadDefault != prevloadDefault));
       break;
+    case 6: 
+      tft.drawString("WIFI", 240 + d, 40);
+      displSETUPitem     ("WiFi enabled     ", 40,  prevwifiEnable, (wifiEnable != prevwifiEnable));
+      displSETUPitemValue("WiFi status      ", 80,  wifiStatusText(), false);
+      displSETUPitem     ("Configure now    ", 120, prevwifiConfigureNow, (wifiConfigureNow != prevwifiConfigureNow));
+      displSETUPitem     ("Reset saved net. ", 160, prevresetWifiConfig, (resetWifiConfig != prevresetWifiConfig));
+      break;
   }
 }
 
@@ -5990,6 +6014,10 @@ void defaultSETUP() {
     
     prevloadMemory = false;
     prevloadDefault = false;
+
+    prevwifiEnable = true;         
+    prevwifiConfigureNow = false;
+    prevresetWifiConfig = false;
   }
   drawList(L_SETUP,"SETUP");
   if (!pageSetup) drawButton(L_SETUP, 0, B_BLOCK);
@@ -6091,6 +6119,24 @@ void changeSETUP(int pos) {
           break;
       }
       break;
+    case 6: 
+      switch (pos) {
+        case 0:
+          prevwifiEnable = !prevwifiEnable;
+          break;
+        case 1:
+          // "WiFi status" to pole informacyjne - dotyk nie ma efektu
+          break;
+        case 2:
+          prevwifiConfigureNow = !prevwifiConfigureNow;
+          if (prevwifiConfigureNow) prevresetWifiConfig = false;
+          break;
+        case 3:
+          prevresetWifiConfig = !prevresetWifiConfig;
+          if (prevresetWifiConfig) prevwifiConfigureNow = false;
+          break;
+      }
+      break;
   }
 }
 
@@ -6101,7 +6147,8 @@ void saveSETUP() {
       batShow != prevbatShow or memoPreset != prevmemoPreset or loadDefault != prevloadDefault or saverOn != prevsaverOn or saverTime != prevsaverTime or
       screenV != prevscreenV or displayOff != prevdisplayOff or minSCANstep != prevminSCANstep or maxSCANstep != prevmaxSCANstep or
       autoSCANstep != prevautoSCANstep or SCANaccuracy != prevSCANaccuracy or displayPower != prevdisplayPower or RDSalways != prevRDSalways or
-      seekAccuracy != prevseekAccuracy) {
+      seekAccuracy != prevseekAccuracy or wifiEnable != prevwifiEnable or wifiConfigureNow != prevwifiConfigureNow or
+      resetWifiConfig != prevresetWifiConfig) { 
     int n = confirm("SAVE CHANGES?");
     if (n == 1) {
       if (VHFon != prevVHFon) {
@@ -6138,9 +6185,30 @@ void saveSETUP() {
       displayPower = prevdisplayPower;
       RDSalways = prevRDSalways;
       seekAccuracy = prevseekAccuracy;
+      wifiEnable = prevwifiEnable;  
       if (SCANaccuracy) countScanSignal = 3; else countScanSignal = 1;
-      
-      if (loadMemory or loadDefault) {
+
+      bool wifiActionTaken = false;
+      if (prevwifiConfigureNow) {
+        configureWifiNow(); 
+        wifiActionTaken = true;
+      }
+      if (prevresetWifiConfig) {
+        wifiManager.resetSettings(); 
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        Serial.println("Saved WiFi network erased.");
+        wifiActionTaken = true;
+      }
+      wifiConfigureNow = prevwifiConfigureNow = false;
+      resetWifiConfig  = prevresetWifiConfig  = false;
+      if (wifiActionTaken) {
+        drawList(L_SETUP, "SETUP");
+        if (!pageSetup) drawButton(L_SETUP, 0, B_BLOCK);
+        if (pageSetup == maxPageSetup) drawButton(L_SETUP, 1, B_BLOCK);
+      }
+
+      if (loadMemory or loadDefault) { 
         if (confirm("REEBOOT NOW?") == 1) {
           tft.fillRect(!screenV * 40, 40, 240, 120, TFT_BLACK);
           tft.setTextSize(2);

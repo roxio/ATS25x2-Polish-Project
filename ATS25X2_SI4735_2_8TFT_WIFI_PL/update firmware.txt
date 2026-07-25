@@ -8,9 +8,9 @@
 
     Zainstaluj przez Menedżera płytek w Arduino IDE ESP32
 
-    Zainstaluj przez Menedżera bibliotek bibliotekę Si4735 PU2CLR V2.17
-
-    Zainstaluj przez Menedżera bibliotek bibliotekę TFT_eSPI V2.17
+    Zainstaluj przez Menedżera bibliotek bibliotekę 	Si4735 PU2CLR V2.17
+						 	TFT_eSPI V2.17
+							WiFiManager 2.0.17
 
     Zastąp w 'ścieżka użytkownika – Dokumenty – Arduino – libraries – TFT_eSPI' dwa pliki z folderu firmware:
     Setup1_ILI9341.h
