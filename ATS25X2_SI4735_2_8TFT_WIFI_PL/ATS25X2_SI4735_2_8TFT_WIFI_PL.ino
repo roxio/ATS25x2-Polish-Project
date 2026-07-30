@@ -1260,15 +1260,12 @@ bool connectWifi() {
   if (hasSaved) {
     drawProgress(0, "Łączenie z WiFi...");
     Serial.println("Łączenie z zapisaną siecią: " + WiFi.SSID());
-    WiFi.begin();   // użyj danych zapisanych w NVS
+    WiFi.begin();
     uint32_t t0 = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < 8000) delay(100);
   }
 
   if (WiFi.status() != WL_CONNECTED) {
-    // Brak zapisanej sieci albo nie udało się połączyć -> pokaż natywną listę
-    // dostępnych sieci na ekranie radia (skanowanie + wybór + klawiatura hasła).
-    // Przycisk POMIN w tym ekranie pozwala zostać offline.
     Serial.println("Brak polaczenia z zapisana siecia - uruchamiam wybor sieci.");
     nativeWifiSetup();
   }
@@ -1281,6 +1278,8 @@ bool connectWifi() {
   } else {
     drawProgress(100, "Brak WiFi – praca offline");
     Serial.println("Brak połączenia WiFi.");
+    // ★ NOWA LINIA – wyłączamy WiFi, żeby nie próbowało ponownie łączyć
+    WiFi.mode(WIFI_OFF);
     delay(1000);
   }
   return ok;
@@ -1403,21 +1402,17 @@ if (wifiEnable) {
   wifiConnected = connectWifi();
   if (wifiConnected) {
     initTime();
-    // Wyłącz WiFi tylko jeśli nie jest w trybie AP i nie ma aktywnej konfiguracji
-    if (!wifiManager.getConfigPortalActive()) {
-      WiFi.disconnect(true);
-      WiFi.mode(WIFI_OFF);
-      wifiConnected = false;
-      Serial.println("WiFi wyłączone - oszczędność energii.");
-    } else {
-      Serial.println("WiFi pozostaje w trybie AP.");
-    }
+    // ★ Rozłączamy, ale ZACHOWUJEMY zapisane dane sieciowe
+    WiFi.disconnect(false);
+    WiFi.mode(WIFI_OFF);
+    wifiConnected = false;
+    Serial.println("WiFi wyłączone - oszczędność energii.");
   } else {
     Serial.println("Brak WiFi – praca offline.");
   }
 } else {
     Serial.println("WiFi wyłączone w ustawieniach.");
-  }
+}
 
   delay(500);
   tft.setCursor(20, 10); //(7, 50);
@@ -1425,7 +1420,7 @@ if (wifiEnable) {
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
 
   Serial.println("ATS25X2 Polish Project");
-  Serial.println("Version 0.12PL 26-07-2026");
+  Serial.println("Version 0.13PL 30-07-2026");
 
   spr.createSprite(265, 120);
   spr.fillScreen(COLOR_BACKGROUND);
@@ -1435,9 +1430,9 @@ if (wifiEnable) {
   
   tft.println("ATS25X2 Polish Project");
   tft.setCursor(7, 33); //(7, 70);
-  tft.println(" Version 0.12PL");
+  tft.println(" Version 0.13PL");
   tft.setCursor(7, 56); //(7, 95);
-  tft.println(" 26-07-2026");
+  tft.println(" 30-07-2026");
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setCursor(7, 79); //(7, 120);
   tft.println(" RoX10 PL MOD");
@@ -1774,19 +1769,21 @@ void SaveInEeprom (void* arg)  {
     storage.wifiEnableAtBoot = wifiEnable;  // ZMIANA
 
     for (unsigned int t = 0; t < sizeof(storage); t++) {
-      delay(1);
+			   
       if (EEPROM.read(offsetEEPROM + t) != *((char*)&storage + t)) {
-        delay(1);
+				 
         EEPROM.write(offsetEEPROM + t, *((char*)&storage + t));
       }
+      if ((t & 0x3F) == 0) vTaskDelay(1); // co 64 bajty oddaj CPU, zamiast delay(1) na kazdy bajt
     }
 
     for (unsigned int t = 0; t < sizeof(MemoBank); t++) {
-      delay(1);
+			   
       if (EEPROM.read(offsetMemoEEPROM + t) != *((char*)&MemoBank + t)) {
-        delay(1);
+				 
         EEPROM.write(offsetMemoEEPROM + t, *((char*)&MemoBank + t));
       }
+      if ((t & 0x3F) == 0) vTaskDelay(1); // co 64 bajty oddaj CPU, zamiast delay(1) na kazdy bajt
     }
 
     writingEeprom = true;
@@ -2247,7 +2244,7 @@ void saver() {
          char timeMin[3];
          strftime(timeMin,3, "%M", &timeinfo);
    
-         if(getLocalTime(&timeinfo)){
+         if(getLocalTime(&timeinfo, 5)){  // ZMIANA: krotki timeout (5ms) zamiast domyslnych 5000ms
          tftPlPrint(String(timeHour)+":"+String(timeMin), saverX + 164, saverY + 15);
           }  
         }
@@ -3989,7 +3986,7 @@ void DisplayClock() {
   //=======================================================================================
 if ((  currentMode == FM ) or (band[bandIdx].bandType == MW_BAND_TYPE) or (band[bandIdx].bandType == LW_BAND_TYPE)and ((FirstLayer) or (SecondLayer) or (ThirdLayer))) {   
   if ((FirstLayer or ThirdLayer) and !PRESbut) {  // dBuV and dB at freq. display
-  if(!getLocalTime(&timeinfo)){
+  if(!getLocalTime(&timeinfo, 5)){  // ZMIANA: krotki timeout (5ms) zamiast domyslnych 5000ms, ktore blokowaly petle gdy brak sync NTP
     return;
   }
   tft.fillRect(0, 23, 55, 33, TFT_BLACK); 
