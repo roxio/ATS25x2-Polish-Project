@@ -1,5 +1,77 @@
 # Historia zmian
+## v0.13PL (30.07.2026)
+### Własny kreator konfiguracji Wi-Fi oraz nowe funkcje interfejsu
 
+W tej wersji całkowicie przebudowano konfigurację sieci Wi-Fi. Zamiast korzystania z portalu konfiguracyjnego WiFiManager użytkownik może skonfigurować połączenie bezpośrednio z poziomu radia. Dodano również ekranową klawiaturę, ekran testowy oraz szereg usprawnień działania programu.
+
+### Dodano
+
+- **Własny kreator konfiguracji Wi-Fi**
+  - automatyczne skanowanie dostępnych sieci,
+  - sortowanie według siły sygnału,
+  - listę sieci z przewijaniem,
+  - oznaczanie sieci otwartych i zabezpieczonych,
+  - możliwość pominięcia konfiguracji.
+
+- **Ekranową klawiaturę**
+  - wpisywanie hasła bez użycia telefonu lub komputera,
+  - obsługę małych i wielkich liter,
+  - obsługę cyfr i znaków specjalnych,
+  - Shift,
+  - Backspace,
+  - Spację,
+  - podgląd wpisywanego hasła.
+
+- **Ekran testowy**
+  - test kolorów RGB,
+  - test wyświetlania polskich znaków.
+
+### Zmieniono
+
+- całkowicie przebudowano sposób konfiguracji Wi-Fi,
+- urządzenie najpierw próbuje połączyć się z zapisaną siecią,
+- po nieudanej próbie uruchamiany jest własny kreator konfiguracji,
+- WiFiManager wykorzystywany jest wyłącznie do zapisu konfiguracji w pamięci ESP32,
+- po synchronizacji czasu moduł Wi-Fi jest automatycznie wyłączany.
+
+### Poprawiono
+
+- obsługę synchronizacji czasu NTP,
+- zarządzanie zasilaniem modułu Wi-Fi,
+- responsywność interfejsu podczas operacji sieciowych,
+- komunikaty ekranowe,
+- obsługę pracy offline,
+- wyświetlanie polskich znaków.
+
+---
+
+## v0.12L (26.07.2026)
+### Polonizacja interfejsu oraz usprawnienia konfiguracji Wi-Fi
+### Dodano
+
+- pełną polonizację menu oraz komunikatów,
+- poprawioną obsługę polskich znaków,
+- nowe komunikaty diagnostyczne,
+- nową stronę Wi-Fi w menu ustawień.
+
+### Zmieniono
+
+- przetłumaczono większość elementów interfejsu użytkownika,
+- przebudowano ekran ustawień,
+- poprawiono wygląd aktywnych elementów menu,
+- zmieniono nazwę punktu dostępowego WiFiManager,
+- dodano zabezpieczenie portalu konfiguracyjnego hasłem,
+- poprawiono obsługę trybu Access Point,
+- zaktualizowano ekran startowy oraz informacje o wersji.
+
+### Poprawiono
+
+- inicjalizację EEPROM,
+- komunikaty synchronizacji czasu,
+- obsługę Wi-Fi,
+- komunikaty diagnostyczne,
+- organizację kodu źródłowego.
+  
 ## v0.11PL (25.07.2026)
 ### Zarządzanie siecią Wi-Fi oraz poprawa mechanizmów timeout
 
