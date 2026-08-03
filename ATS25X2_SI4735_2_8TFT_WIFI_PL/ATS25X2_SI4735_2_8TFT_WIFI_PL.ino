@@ -314,7 +314,7 @@ bool  presetBank          = false;
 //SETUP
 bool    SETUPbut          = false;
 int     pageSetup         = 0;
-uint8_t maxPageSetup      = 7;   // ZMIANA: dodano stronę WIFI (było 5)
+uint8_t maxPageSetup      = 7;
 //===========================================
 //PRE
 bool      PREtap          = false;
@@ -337,7 +337,7 @@ bool batShow;
 bool loadMemory;
 bool loadDefault;
 bool saverOn;
-uint8_t saverTime;
+uint16_t saverTime;
 bool displayOff;
 float minSCANstep;
 float maxSCANstep;
@@ -350,10 +350,9 @@ uint16_t boolOpt;
 bool RDSalways;
 bool seekAccuracy;
 
-// ZMIANA: zmienne strony SETUP "WIFI"
-bool wifiEnable          = true;   // czy WiFi ma być używane przy starcie (trwałe, zapisywane w EEPROM)
-bool wifiConfigureNow    = false;  // sesyjne: dodaj/zmień sieć WiFi bez kasowania obecnej
-bool resetWifiConfig     = false;  // sesyjne: skasuj zapisaną sieć WiFi
+bool wifiEnable          = true;
+bool wifiConfigureNow    = false;
+bool resetWifiConfig     = false;
 
 bool prevdigitLigth;
 bool prevlangRetroEN;
@@ -364,7 +363,7 @@ bool prevbatShow;
 bool prevmemoPreset;
 bool prevloadDefault;
 bool prevsaverOn;
-uint8_t prevsaverTime;
+uint16_t prevsaverTime;
 bool prevdisplayOff;
 float prevminSCANstep;
 float prevmaxSCANstep;
@@ -378,12 +377,39 @@ bool prevwifiEnable;
 bool prevwifiConfigureNow;
 bool prevresetWifiConfig;
 //===========================================
+const uint16_t saverTimePresets[] = {30, 60, 90, 120, 180, 300, 600, 900, 1200, 1800};
+const uint8_t saverTimePresetsCount = sizeof(saverTimePresets) / sizeof(saverTimePresets[0]);
+
+uint16_t nextSaverTime(uint16_t current) {
+  for (uint8_t i = 0; i < saverTimePresetsCount; i++) {
+    if (current == saverTimePresets[i]) {
+      return saverTimePresets[(i + 1) % saverTimePresetsCount];
+    }
+  }
+  return saverTimePresets[0];
+}
+
+String saverTimeText(uint16_t seconds) {
+  if (seconds < 60) return String(seconds) + "s";
+  if (seconds % 60 == 0) return String(seconds / 60) + "min";
+  return String(seconds / 60) + "min " + String(seconds % 60) + "s";
+}
+//===========================================
 //SCREEN SAVER
 long elapsedSaver = millis();
 bool Saver = false;
 int saverX;
 int saverY;
 int posSaver = 0;
+#define SAVER_BLOCK_W 140
+#define SAVER_BLOCK_H 100
+int saverVX = 2;
+int saverVY = 2;
+long elapsedSaverMove = millis();
+uint16_t saverColor = TFT_DARKCYAN;
+uint8_t saverColorIdx = 0;
+const uint16_t saverColors[] = {TFT_DARKCYAN, TFT_ORANGE, TFT_MAGENTA, TFT_GREENYELLOW, TFT_YELLOW, TFT_PINK, TFT_SKYBLUE};
+const uint8_t saverColorsCount = sizeof(saverColors) / sizeof(saverColors[0]);
 //===========================================
 bool pressed;
 bool presStat;
@@ -648,7 +674,7 @@ const int lastdignum    = (sizeof dn / sizeof(DigNum)) - 1;
 uint16_t bandMode[(lastBand + 1)];
 
 #define offsetEEPROM       32
-#define EEPROM_SIZE        2048
+#define EEPROM_SIZE        2304
 
 struct StoreStruct {
   byte     chkDigit;
@@ -713,7 +739,7 @@ struct StoreStruct {
   uint16_t currentFreqRetro6;
   uint16_t currentFreqRetro7;
   uint16_t currentFreqRetro8;
-  uint8_t  saverTime;
+  uint16_t saverTime;
   uint8_t  RETROband;
   uint8_t  SCANscale;
   uint16_t boolOpt;
@@ -723,6 +749,9 @@ struct StoreStruct {
   //V6 - ustawienia WiFi (ATS25X2 PL)
   byte    chk6;
   uint8_t wifiEnableAtBoot;
+  char    wifiSSID[33]; 
+  char    wifiPassword[65]; 
+  byte    chk7;             
 };
 
 StoreStruct storage = {
@@ -788,7 +817,7 @@ StoreStruct storage = {
   9400, //currentFreqRetro6
   13570,//currentFreqRetro7
   18900,//currentFreqRetro8
-  10,   //saverTime
+  600,  //saverTime (sekundy = 10 min, jak dawniej)
   0,    //RETROband
   193,  //SCANscale
   1181,    //boolOpt
@@ -798,9 +827,12 @@ StoreStruct storage = {
 // ==========================================  												 
   '@',  //V6 or higher build first time check
   1,    // wifiEnableAtBoot (domyślnie WiFi włączone)
+  "",   // wifiSSID (puste - brak zapisanej sieci)
+  "",   // wifiPassword
+  '@',  // chk7 - znacznik wersji wifiSSID/wifiPassword
 };
 //MEMO BANK===============================================================
-#define offsetMemoEEPROM       248
+#define offsetMemoEEPROM       352
 
 typedef struct // MemoBank data
 {
@@ -907,7 +939,7 @@ void scanOPTunpack() {
 //==============================================
 String wifiStatusText() {
   if (WiFi.status() == WL_CONNECTED) return "Połączono: " + WiFi.SSID();
-  String saved = WiFi.SSID();          // ESP32 pamięta ostatnio zapisaną sieć nawet gdy jest rozłączone
+  String saved = WiFi.SSID();
   if (saved.length()) return "Zapisano: " + saved + " (offline)";
   return "Brak zapisanej sieci";
 }
@@ -927,11 +959,12 @@ bool touchIn(int16_t rx, int16_t ry, int16_t rw, int16_t rh) {
 void drawSimpleButton(int16_t rx, int16_t ry, int16_t rw, int16_t rh, String label, uint16_t bg) {
   tft.fillRoundRect(rx, ry, rw, rh, 4, bg);
   tft.drawRoundRect(rx, ry, rw, rh, 4, TFT_WHITE);
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_WHITE, bg);
-  tft.setTextDatum(MC_DATUM);
-  tft.drawString(label, rx + rw / 2, ry + rh / 2);
-  tft.setTextDatum(TL_DATUM);
+  tftPlSetSize(1);
+  tftPlSetStyle(REG_T);
+  tftPlSetFont(T1012_T);
+  tftPlSetDatum(BC_T);
+  tftPlSetColor(TFT_WHITE, bg);
+  tftPlPrint(label, rx + rw / 2, ry + (rh + 12) / 2);
 }
 
 // ---------------------- Skanowanie i lista sieci WiFi ----------------------
@@ -994,18 +1027,22 @@ String wifiPickNetwork(bool &skipped) {
     int startIdx = page * WIFI_ROWS_PER_PAGE;
 
     tft.fillScreen(TFT_BLACK);
-    tft.setTextSize(2);
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.setTextDatum(TL_DATUM);
-    tft.setCursor(10, 5);
-    tft.println("Wybierz sieć WiFi");
+    tftPlSetSize(2);
+    tftPlSetStyle(REG_T);
+    tftPlSetFont(T1012_T);
+    tftPlSetDatum(BL_T);
+    tftPlSetColor(TFT_YELLOW, TFT_BLACK);
+    tftPlPrint("Wybierz sieć WiFi", 10, 29);
 
     const int rowTop = 34, rowH = 32;
     tft.setTextSize(1);
     if (wifiApCount == 0) {
-      tft.setTextColor(TFT_WHITE, TFT_BLACK);
-      tft.setCursor(10, rowTop + 10);
-      tft.println("Nie znaleziono żadnych sieci.");
+      tftPlSetSize(1);
+      tftPlSetStyle(REG_T);
+      tftPlSetFont(T1012_T);
+      tftPlSetDatum(BL_T);
+      tftPlSetColor(TFT_WHITE, TFT_BLACK);
+      tftPlPrint("Nie znaleziono żadnych sieci.", 10, rowTop + 22); // ZMIANA
     }
     for (int i = 0; i < WIFI_ROWS_PER_PAGE; i++) {
       int idx = startIdx + i;
@@ -1114,13 +1151,11 @@ String wifiKeyboardInput(String title, bool &cancelled) {
     tft.setCursor(6, 4);
     tft.println(title);
 
-    // pole tekstowe
     tft.drawRoundRect(6, 20, tft.width() - 12, 26, 3, TFT_CYAN);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.setCursor(12, 28);
     String shown = showText ? val : String("");
     if (!showText) for (uint16_t i = 0; i < val.length(); i++) shown += "*";
-    // pokaż tylko końcówkę, jeśli nie mieści się w polu
     const int maxChars = (tft.width() - 24) / 6;
     if ((int)shown.length() > maxChars) shown = shown.substring(shown.length() - maxChars);
     tft.print(shown);
@@ -1249,66 +1284,163 @@ bool nativeWifiSetup() {
 // ------------------------------- Łączenie z WiFi --------------------------------------
 //=======================================================================================
 
-bool connectWifi() {
-  if (WiFi.status() == WL_CONNECTED) return true;
+bool connectWifi()
+{
+  if (WiFi.status() == WL_CONNECTED)
+    return true;
 
   WiFi.mode(WIFI_STA);
-  delay(100);
+  delay(200);
 
-  bool hasSaved = WiFi.SSID().length() > 0;
+  bool hasSaved =
+      (storage.chk6 == '@') &&
+      (storage.chk7 == '@') &&
+      strlen(storage.wifiSSID) > 0;
 
-  if (hasSaved) {
+  if (hasSaved)
+  {
     drawProgress(0, "Łączenie z WiFi...");
-    Serial.println("Łączenie z zapisaną siecią: " + WiFi.SSID());
-    WiFi.begin();
+
+    Serial.print("SSID: ");
+    Serial.println(storage.wifiSSID);
+
+    WiFi.begin(storage.wifiSSID, storage.wifiPassword);
+
     uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 8000) delay(100);
+
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - t0 < 15000)
+    {
+      delay(100);
+      yield();
+    }
   }
 
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Brak polaczenia z zapisana siecia - uruchamiam wybor sieci.");
-    nativeWifiSetup();
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.println("Brak zapisanej sieci lub połączenie nieudane.");
+
+    if (!nativeWifiSetup())
+    {
+      drawProgress(100, "Brak WiFi - offline");
+
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+
+      return false;
+    }
   }
 
-  bool ok = (WiFi.status() == WL_CONNECTED);
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    drawProgress(100, "Połączono");
 
-  if (ok) {
-    drawProgress(100, "Połączono: " + WiFi.SSID());
-    Serial.println("Połączono: " + WiFi.SSID());
-  } else {
-    drawProgress(100, "Brak WiFi – praca offline");
-    Serial.println("Brak połączenia WiFi.");
-    // ★ NOWA LINIA – wyłączamy WiFi, żeby nie próbowało ponownie łączyć
-    WiFi.mode(WIFI_OFF);
-    delay(1000);
+    strncpy(storage.wifiSSID,
+            WiFi.SSID().c_str(),
+            sizeof(storage.wifiSSID) - 1);
+
+    storage.wifiSSID[sizeof(storage.wifiSSID) - 1] = 0;
+
+    strncpy(storage.wifiPassword,
+            WiFi.psk().c_str(),
+            sizeof(storage.wifiPassword) - 1);
+
+    storage.wifiPassword[sizeof(storage.wifiPassword) - 1] = 0;
+
+    storage.chk6 = '@';
+    storage.chk7 = '@';
+
+    saveConfig();
+    EEPROM.commit();
+
+    Serial.println("Konfiguracja WiFi zapisana.");
+
+    return true;
   }
-  return ok;
-}
-
-void configureWifiNow() {
-  WiFi.mode(WIFI_STA);
-  bool ok = nativeWifiSetup();
-
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextSize(2);
-  tft.setCursor(10, 100);
-  if (ok) {
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.println("Zapisano sieć:");
-    tft.setTextSize(1);
-    tft.setCursor(10, 130);
-    tft.println(WiFi.SSID());
-    Serial.println("Skonfigurowano WiFi: " + WiFi.SSID());
-  } else {
-    tft.setTextColor(TFT_RED, TFT_BLACK);
-    tft.println("Anulowano / offline");
-    Serial.println("Anulowano / limit czasu");
-  }
-  delay(1500);
 
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
-  wifiConnected = false;
+
+  return false;
+}
+
+void configureWifiNow()
+{
+  WiFi.mode(WIFI_STA);
+
+  bool ok = nativeWifiSetup();
+
+  // ---- Wyświetlenie wyniku na TFT ----
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(10, 100);
+
+  if (ok)
+  {
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.println("Zapisano siec:");
+    tft.setTextSize(1);
+    tft.setCursor(10, 130);
+    tft.println(WiFi.SSID());
+
+    Serial.println("Skonfigurowano WiFi: " + WiFi.SSID());
+
+    //====================================================
+    // Zapis konfiguracji WiFi
+    //====================================================
+
+    memset(storage.wifiSSID, 0, sizeof(storage.wifiSSID));
+    memset(storage.wifiPassword, 0, sizeof(storage.wifiPassword));
+
+    strncpy(storage.wifiSSID,
+            WiFi.SSID().c_str(),
+            sizeof(storage.wifiSSID) - 1);
+
+    strncpy(storage.wifiPassword,
+            WiFi.psk().c_str(),
+            sizeof(storage.wifiPassword) - 1);
+
+    storage.wifiSSID[sizeof(storage.wifiSSID) - 1] = '\0';
+    storage.wifiPassword[sizeof(storage.wifiPassword) - 1] = '\0';
+
+    storage.chk6 = '@';
+    storage.chk7 = '@';
+
+    saveConfig();
+
+    // Jeżeli saveConfig() NIE wykonuje EEPROM.commit(),
+    // odkomentuj poniższą linię:
+    //
+    // EEPROM.commit();
+
+    Serial.println();
+    Serial.println("--------------------------------");
+    Serial.println("Konfiguracja WiFi zapisana.");
+    Serial.print("SSID : ");
+    Serial.println(storage.wifiSSID);
+    Serial.println("--------------------------------");
+
+    wifiConnected = true;
+  }
+  else
+  {
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.println("Anulowano / offline");
+
+    Serial.println("Anulowano / limit czasu");
+
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+
+    wifiConnected = false;
+  }
+
+  // Zamiast delay()
+  uint32_t t = millis();
+  while (millis() - t < 1500)
+  {
+    yield();
+  }
 }
 
 void initTime() {
@@ -1385,13 +1517,34 @@ void setup() {
 #endif
 
   if (!EEPROM.begin(EEPROM_SIZE))
-  {
-    tft.fillScreen(TFT_BLACK);
-    tft.setCursor(0, 0);
-    tft.println(F("Błąd inicjowania EEPROM"));
-    Serial.println(F("Błąd inicjowania  EEPROM"));
-    while (1);
-  }
+{
+    Serial.println();
+    Serial.println("====================================");
+    Serial.println("BŁĄD inicjalizacji EEPROM !");
+    Serial.println("====================================");
+
+    while (true)
+    {
+        delay(100);
+    }
+}
+
+Serial.println();
+Serial.println("===== EEPROM =====");
+
+Serial.print("StoreStruct = ");
+Serial.print(sizeof(storage));
+Serial.println(" bajtów");
+
+Serial.print("EEPROM_SIZE = ");
+Serial.println(EEPROM_SIZE);
+
+Serial.print("Pozostało = ");
+Serial.print(EEPROM_SIZE - sizeof(storage));
+Serial.println(" bajtów");
+
+Serial.println("==================");
+
 
   tft.fillScreen(TFT_BLACK);
 
@@ -1402,7 +1555,6 @@ if (wifiEnable) {
   wifiConnected = connectWifi();
   if (wifiConnected) {
     initTime();
-    // ★ Rozłączamy, ale ZACHOWUJEMY zapisane dane sieciowe
     WiFi.disconnect(false);
     WiFi.mode(WIFI_OFF);
     wifiConnected = false;
@@ -1420,7 +1572,7 @@ if (wifiEnable) {
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
 
   Serial.println("ATS25X2 Polish Project");
-  Serial.println("Version 0.13PL 30-07-2026");
+  Serial.println("Versja 0.14PL 03-08-2026");
 
   spr.createSprite(265, 120);
   spr.fillScreen(COLOR_BACKGROUND);
@@ -1430,9 +1582,9 @@ if (wifiEnable) {
   
   tft.println("ATS25X2 Polish Project");
   tft.setCursor(7, 33); //(7, 70);
-  tft.println(" Version 0.13PL");
+  tft.println(" Wersja 0.14PL");
   tft.setCursor(7, 56); //(7, 95);
-  tft.println(" 30-07-2026");
+  tft.println(" 03-08-2026");
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setCursor(7, 79); //(7, 120);
   tft.println(" RoX10 PL MOD");
@@ -1446,8 +1598,7 @@ if (wifiEnable) {
   tftPlSetColor(TFT_CYAN, TFT_TRANS);
   tftPlPrint("NACIŚNIJ I TRZYMAJ ENKODER BY", 0, 172);
   tftPlPrint("ZAŁADOWAĆ USTAWIENIA BAZOWE", 0, 184);
-  tft.setCursor(0, 196);
-  tft.println("NACIŚNIJ I PRZYTRZYMAJ BY OBRÓCIĆ EKRAN");
+  tftPlPrint("NACIŚNIJ I PRZYTRZYMAJ BY OBRÓCIĆ EKRAN", 0, 196);
   tft.setTextSize(2);
   tft.setCursor(20, 130); //(7, 170);
   delay(1500);
@@ -1574,7 +1725,7 @@ if (wifiEnable) {
     bandRetro[6].currentFreq  =  9400;
     bandRetro[7].currentFreq  =  13570;
     bandRetro[8].currentFreq  =  18900;
-    saverTime                 =  10;
+    saverTime                 =  600; // sekundy = 10 min
     RETROband                 =  0;
     SCANscale                 =  193;
     boolOpt                   =  1181;
@@ -1593,6 +1744,13 @@ if (wifiEnable) {
     storage.chk6             = '@';
     storage.wifiEnableAtBoot = 1;
     wifiEnable                = true;
+  }
+  // ZMIANA: osobna weryfikacja wersji dla wifiSSID/wifiPassword - jesli EEPROM pochodzi
+  // ze starszej wersji (przed dodaniem tych pol), wymus puste wartosci zamiast smieci
+  if (storage.chk7 != '@') {
+    storage.chk7 = '@';
+    storage.wifiSSID[0] = '\0';
+    storage.wifiPassword[0] = '\0';
   }
 // ===============================================
   OPTunpack();
@@ -1829,13 +1987,51 @@ void saveConfig() {
 }
 
 //=======================================================================================
-void loadConfig() {
-  //=======================================================================================
-  if (EEPROM.read(offsetEEPROM + 0) == storage.chkDigit) {
-    for (unsigned int t = 0; t < sizeof(storage); t++)
-      *((char*)&storage + t) = EEPROM.read(offsetEEPROM + t);
-    Serial.println("Załadowano konfigurację");
+void loadConfig()
+{
+  //===========================================================
+  // Wczytanie konfiguracji z EEPROM
+  //===========================================================
+
+  byte chk = EEPROM.read(offsetEEPROM);
+
+  if (chk != '@')
+  {
+    Serial.println("EEPROM pusty - używam ustawień domyślnych.");
+
+    memset(storage.wifiSSID, 0, sizeof(storage.wifiSSID));
+    memset(storage.wifiPassword, 0, sizeof(storage.wifiPassword));
+
+    storage.chk6 = 0;
+    storage.chk7 = 0;
+
+    return;
   }
+
+  for (unsigned int t = 0; t < sizeof(storage); t++)
+  {
+    *((char*)&storage + t) = EEPROM.read(offsetEEPROM + t);
+  }
+
+  //===========================================================
+  // Walidacja części WiFi
+  //===========================================================
+
+  if (storage.chk6 != '@' || storage.chk7 != '@')
+  {
+    Serial.println("Brak zapisanej konfiguracji WiFi.");
+
+    memset(storage.wifiSSID, 0, sizeof(storage.wifiSSID));
+    memset(storage.wifiPassword, 0, sizeof(storage.wifiPassword));
+
+    storage.chk6 = 0;
+    storage.chk7 = 0;
+  }
+
+  storage.wifiSSID[sizeof(storage.wifiSSID)-1] = '\0';
+  storage.wifiPassword[sizeof(storage.wifiPassword)-1] = '\0';
+
+  Serial.println("Załadowano konfigurację.");
 }
 
 //=======================================================================================
@@ -2187,66 +2383,90 @@ void saver() {
     freq = si4735.getFrequency();
     if (SCANbut) freq = currentScanFreq + int((currentScanLine - 159 + deltaScanLine) * SCANstep);
     else if (currentMode == LSB || currentMode == USB || currentMode == CW) freq -= int(currentBFO / 1000);
+
+    // ZMIANA: styl "DVD" - startowa pozycja i kierunek odbijajacego sie bloku
+    saverX = random(tft.width()  - SAVER_BLOCK_W  - 2) + 1;
+    saverY = random(tft.height() - SAVER_BLOCK_H - 2) + 1;
+    saverVX = random(0, 2) ? 2 : -2;
+    saverVY = random(0, 2) ? 2 : -2;
+    saverColorIdx = 0;
+    saverColor = saverColors[saverColorIdx];
+    elapsedSaverMove = millis();
   }
 //WAIT activity
   while (((pressed == false) and (encoderCount == 0) and (encoderButton == 0) and (analogRead(ENCODER_SWITCH) > 500)) or (writingEeprom)) {  // wait loop
     pressed = tft.getTouch(&x, &y);
     if (saverOn) {
-      int t = posSaver;
-      posSaver++;
-      if (posSaver == 500) posSaver = 0;
-      for (int i = 0; i < 63; i++) {
-        int c = 31 - abs(i - 31);
-        if (t < 200) {
-          tft.drawPixel(saverX - 10 + t, saverY - 5, (c * 64) + c);
-        } else if (t >= 200 and t < 250) {
-          tft.drawPixel(saverX + 189, saverY - 205 + t, (c * 64) + c);
-        } else if (t >= 250 and t < 450) {
-          tft.drawPixel(saverX + 439 - t, saverY + 44, (c * 64) + c);
-        } else {
-          tft.drawPixel(saverX - 10, saverY + 494 - t, (c * 64) + c);
+      if ((millis() - elapsedSaverMove) > 40) { // ZMIANA: krok animacji co 40ms (plynny ruch, niskie obciazenie CPU)
+        elapsedSaverMove = millis();
+
+        // wymaz blok na starej pozycji
+        tft.fillRect(saverX, saverY, SAVER_BLOCK_W, SAVER_BLOCK_H, TFT_BLACK);
+
+        // ruch + odbicie od krawedzi ekranu
+        saverX += saverVX;
+        saverY += saverVY;
+
+        bool bounced = false;
+        if (saverX <= 0) { saverX = 0; saverVX = -saverVX; bounced = true; }
+        if (saverX + SAVER_BLOCK_W >= tft.width())  { saverX = tft.width()  - SAVER_BLOCK_W;  saverVX = -saverVX; bounced = true; }
+        if (saverY <= 0) { saverY = 0; saverVY = -saverVY; bounced = true; }
+        if (saverY + SAVER_BLOCK_H >= tft.height()) { saverY = tft.height() - SAVER_BLOCK_H; saverVY = -saverVY; bounced = true; }
+
+        if (bounced) { // zmiana koloru przy kazdym odbiciu - klasyczny efekt DVD
+          saverColorIdx = (saverColorIdx + 1) % saverColorsCount;
+          saverColor = saverColors[saverColorIdx];
         }
-        t += 3;
-        if (t > 499) t -= 500;
-      }
-      if ((elapsedSaver + 15000) < millis()) {
-        elapsedSaver = millis();
-        tft.fillScreen(TFT_BLACK);
-        if (screenV) {
-          saverX = random(40) + 10;
-          saverY = random(270) + 5;
-        } else {
-          saverX = random(120) + 10;
-          saverY = random(190) + 5;
-        }
+
+        // CZESTOTLIWOSC
         FreqDraw(freq, 0);
-        if (batShow) {
-          float vsupply = 3.724 * analogRead(BAT_INFO) / 2047; //3.3v
-          int bat = map(int(vsupply * 100), 270, 405, 0, 100);
-          if (bat < 0) bat = 0;
-          if (bat > 100) bat = 100;
-          int colorBatt = TFT_DARKCYAN;
-          if (bat < 15) colorBatt = TFT_ORANGE;
-          if (bat < 5) colorBatt = 64528;
-		  tft.drawRect(saverX + 142, saverY, 43, 18, colorBatt);														
-      //    tft.drawRect(saverX + 145, saverY, 38, 18, colorBatt);
-      //    tft.drawRect(saverX + 184, saverY + 4, 2, 10, colorBatt);
+
+        // ZEGAR - ten sam styl/rozmiar (font 7-segmentowy) co czestotliwosc, zawsze widoczny
+        if (getLocalTime(&timeinfo, 5)) {
+          char timeHM[6];
+          strftime(timeHM, 6, "%H:%M", &timeinfo);
+          spr.createSprite(140, 38);
+          spr.fillScreen(COLOR_BACKGROUND);
+          spr.setTextSize(1);
+          spr.setTextPadding(0);
+          spr.setFreeFont(&DSEG7_Classic_Mini_Regular_34);
+          spr.setTextDatum(BR_DATUM);
+          spr.setTextColor(saverColor);
+          spr.drawString(String(timeHM), 140, 38);
+          spr.pushSprite(saverX, saverY + 42);
+          spr.setFreeFont(NULL);   // ZMIANA: brakujace zwolnienie sprite'a - powodowalo psucie wygladu przyciskow po wygaszaczu
+          spr.deleteSprite();      // ZMIANA
+        }
+
+        // PASMO / TRYB (FM, AM, LSB, USB, CW, LW, MW...) + BATERIA
+        {
+          String modeBandText;
+          if (band[bandIdx].bandType == LW_BAND_TYPE || band[bandIdx].bandType == MW_BAND_TYPE) {
+            modeBandText = String(band[bandIdx].bandName);
+          } else {
+            modeBandText = bandModeDesc[currentMode];
+            if (modeBandText == "USB" and CWShift) modeBandText = "CW";
+          }
+
           tftPlSetFont(T1012_T);
           tftPlSetSize(1);
-          tftPlSetColor(TFT_CYAN, TFT_TRANS);
-          tftPlSetDatum(BC_T);
           tftPlSetStyle(NRG_T);
-      //    tftPlPrint(String(bat) + "%", saverX + 164, saverY + 15);
-  
-         char timeHour[3];
-         strftime(timeHour,3, "%H", &timeinfo);
-  
-         char timeMin[3];
-         strftime(timeMin,3, "%M", &timeinfo);
-   
-         if(getLocalTime(&timeinfo, 5)){  // ZMIANA: krotki timeout (5ms) zamiast domyslnych 5000ms
-         tftPlPrint(String(timeHour)+":"+String(timeMin), saverX + 164, saverY + 15);
-          }  
+          tftPlSetColor(saverColor, TFT_TRANS);
+          tftPlSetDatum(BL_T);
+          tftPlPrint(modeBandText, saverX, saverY + 98);
+
+          if (batShow) {
+            float vsupply = 3.724 * analogRead(BAT_INFO) / 2047; //3.3v
+            int bat = map(int(vsupply * 100), 270, 405, 0, 100);
+            if (bat < 0) bat = 0;
+            if (bat > 100) bat = 100;
+            uint16_t colorBatt = TFT_GREEN;
+            if (bat < 15) colorBatt = TFT_ORANGE;
+            if (bat < 5) colorBatt = TFT_RED;
+            tftPlSetColor(colorBatt, TFT_TRANS);
+            tftPlSetDatum(BR_T);
+            tftPlPrint(String(bat) + "%", saverX + 140, saverY + 98);
+          }
         }
       }
     }
@@ -2372,7 +2592,7 @@ void loop() {
 
   while (((pressed == false) and (encoderCount == 0) and (encoderButton == 0) and (analogRead(ENCODER_SWITCH) > 500)) or (writingEeprom)) {  // wait loop
     pressed = tft.getTouch(&x, &y);
-    if ((elapsedSaver + (saverTime * 60000)) < millis() and (saverOn or displayOff)) saver();
+    if ((elapsedSaver + ((unsigned long)saverTime * 1000)) < millis() and (saverOn or displayOff)) saver(); // ZMIANA: saverTime w sekundach
     showtimeRSSI();
     if (batShow) Battery();
     if (PRESbut or RDSalways) DisplayRDS();
@@ -4870,10 +5090,12 @@ void drawList(uint8_t lay, String text) {
     }
   }
   tft.fillRect(d, 0, 240, 20, TFT_GREY);
-  tft.setTextSize(2);
-  tft.setTextColor(TFT_CYAN, TFT_GREY);
-  tft.setTextDatum(BC_DATUM);
-  tft.drawString(text, 120 + d, 20);
+  tftPlSetSize(1);
+  tftPlSetStyle(REG_T);
+  tftPlSetFont(T1012_T);
+  tftPlSetDatum(BC_T);
+  tftPlSetColor(TFT_CYAN, TFT_GREY);
+  tftPlPrint(text, 120 + d, 20); // ZMIANA: tftPlPrint zamiast tft.drawString - obsluguje polskie znaki (naglowki list)
   if (lay == L_SETUP) {
     spr.createSprite(265, 120);
     spr.fillScreen(COLOR_BACKGROUND);
@@ -5078,7 +5300,7 @@ void Segment(String freq, String mask, int d) {
   spr.setTextPadding(0);
   spr.setFreeFont(&DSEG7_Classic_Mini_Regular_34);
   spr.setTextDatum(BR_DATUM);
-  spr.setTextColor(TFT_DARKCYAN);
+  spr.setTextColor(saverColor); // ZMIANA: kolor zmienia sie przy kazdym odbiciu (styl DVD)
   spr.drawString(freq, 140, 38);
   spr.pushSprite(saverX, saverY);
  } else {
@@ -6263,7 +6485,7 @@ void displSETUP() {
       tftPlPrint("WYŚWIETLACZ", 20 , 40);
       displSETUPitem     ("Wygaszacz ekranu  ", 40,  prevsaverOn, (saverOn != prevsaverOn));
       displSETUPitem     ("Podświetlenie     ", 80,  prevdisplayOff, (displayOff != prevdisplayOff));
-      displSETUPitemValue("Czas do wygaszacza", 120, String(prevsaverTime), (saverTime != prevsaverTime));
+      displSETUPitemValue("Czas do wygaszacza", 120, saverTimeText(prevsaverTime), (saverTime != prevsaverTime));
       displSETUPitem     ("Orientacja pionowa", 160, prevscreenV, (screenV != prevscreenV));
       break;
     case 3:
@@ -6378,7 +6600,7 @@ void defaultSETUP() {
 
     prevsaverOn = true;
     prevdisplayOff = false;
-    prevsaverTime = 10;
+    prevsaverTime = 600;
     prevscreenV = false;
 
     prevminSCANstep = 0.125;
@@ -6441,13 +6663,7 @@ void changeSETUP(int pos) {
           prevdisplayOff = !prevdisplayOff;
           break;
         case 2:
-          if (prevsaverTime == 2) prevsaverTime = 5;
-          else
-          if (prevsaverTime == 5) prevsaverTime = 10;
-          else
-          if (prevsaverTime == 10) prevsaverTime = 30;
-          else
-          if (prevsaverTime == 30) prevsaverTime = 2;
+          prevsaverTime = nextSaverTime(prevsaverTime);
           break;
         case 3:
           prevscreenV = !prevscreenV;
@@ -6503,7 +6719,6 @@ void changeSETUP(int pos) {
           prevwifiEnable = !prevwifiEnable;
           break;
         case 1:
-          // "WiFi status" to pole informacyjne - dotyk nie ma efektu
           break;
         case 2:
           prevwifiConfigureNow = !prevwifiConfigureNow;
@@ -6575,6 +6790,8 @@ void saveSETUP() {
         wifiManager.resetSettings(); 
         WiFi.disconnect(true);
         WiFi.mode(WIFI_OFF);
+        storage.wifiSSID[0] = '\0';
+        storage.wifiPassword[0] = '\0';
         Serial.println("Zapisane sieci WiFi usunięto.");
         wifiActionTaken = true;
       }
@@ -6612,10 +6829,12 @@ int confirm(String text) {
   int d = !screenV * 40;
   if (!screenV) tftTransRect(0, 0, 320, 240, TFT_MAROON); else tftTransRect(0, 0, 240, 320, TFT_MAROON);
   tft.fillRect(d, 40, 240, 120, TFT_BLACK);
-  tft.setTextSize(2);
-  tft.setTextDatum(BC_DATUM);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString(String(text), 120 + d, 80);
+  tftPlSetSize(1);
+  tftPlSetStyle(REG_T);
+  tftPlSetFont(T1012_T);
+  tftPlSetDatum(BC_T);
+  tftPlSetColor(TFT_WHITE, TFT_BLACK);
+  tftPlPrint(text, 120 + d, 80);
   drawButtons(L_CONFIRM);
   int n = -1;
   while (n < 0 and (elapsedSaver + 120000) > millis()) {
@@ -6897,7 +7116,6 @@ void tftPlPrint(String text, int x, int y) {
   }
 }
 
-// Zlicza znaki w tekście UTF-8, w tym polskie litery jako pojedyncze znaki.
 //=======================================================================================
 int tftPlLength(String text) {
   //=======================================================================================
@@ -6909,7 +7127,6 @@ int tftPlLength(String text) {
   return (int) textsize;
 }
 
-// Oblicza szerokość tekstu z bieżącymi ustawieniami.
 //=======================================================================================
 int tftPlTextWidth(String text) {
   //=======================================================================================
@@ -6980,42 +7197,56 @@ int jamButton(uint8_t lay) {
 
 //=======================================================================================
 void drawBut(uint8_t id, uint8_t state, String alt) {
-  //=======================================================================================
-  spr.createSprite(But_Width, But_Height);
-  spr.fillScreen(COLOR_BACKGROUND);
-  spr.setTextSize(2);
-  spr.setTextDatum(BC_DATUM);
-  spr.setTextPadding(0);
+  int bx = screenV ? but[id].xPosV : but[id].xPosH;
+  int by = screenV ? but[id].yPosV : but[id].yPosH;
+
   if (alt == "") alt = but[id].Name;
   int type = but[id].type;
   if (alt == "") state = B_BLOCK;
   if (state == B_BLOCK) butBlock[id] = true; else butBlock[id] = false;
-  if (state == B_BLOCK) spr.pushImage(0, 0, But_Width, But_Height, (uint16_t *)But_block);
+
+  if (state == B_BLOCK) tft.pushImage(bx, by, But_Width, But_Height, (uint16_t *)But_block);
   else
   if (state == B_NORMAL) {
-    if (type == B_BLUE)  spr.pushImage(0, 0, But_Width, But_Height, (uint16_t *)But_);
-    if (type == B_GREEN) spr.pushImage(0, 0, But_Width, But_Height, (uint16_t *)But_page);
-    if (type == B_GOLD)  spr.pushImage(0, 0, But_Width, But_Height, (uint16_t *)But_retro);
+    if (type == B_BLUE)  tft.pushImage(bx, by, But_Width, But_Height, (uint16_t *)But_);
+    if (type == B_GREEN) tft.pushImage(bx, by, But_Width, But_Height, (uint16_t *)But_page);
+    if (type == B_GOLD)  tft.pushImage(bx, by, But_Width, But_Height, (uint16_t *)But_retro);
   } else
-  if (type == B_GOLD) spr.pushImage(0, 0, But_Width, But_Height, (uint16_t *)But_fix);
+  if (type == B_GOLD) tft.pushImage(bx, by, But_Width, But_Height, (uint16_t *)But_fix);
   else
-  if (state == B_JAM) spr.pushImage(0, 0, But_Width, But_Height, (uint16_t *)But_jam);
-  else spr.pushImage(0, 0, But_Width, But_Height, (uint16_t *)But_select);
-  if (state == B_BLOCK) spr.setTextColor(TFT_SILVER);
-  else
-  if (state == B_JAM) spr.setTextColor(TFT_WHITE);
-  else
-  if (state == B_SELECT) spr.setTextColor(TFT_YELLOW);
-  else
-  if (type == B_GOLD) spr.setTextColor(TFT_WHITE);
-  else spr.setTextColor(TFT_CYAN);
-  spr.drawString(alt, (But_Width / 2) + 3, (But_Height / 2) + 10);
-  if (state != B_JAM && state != B_SELECT) {
-    if (state == B_BLOCK || type != B_GOLD) spr.setTextColor(TFT_BLACK); else spr.setTextColor(TFT_OLIVE);
-    spr.drawString(alt, (But_Width / 2) + 2, (But_Height / 2) + 9);
+  if (state == B_JAM) tft.pushImage(bx, by, But_Width, But_Height, (uint16_t *)But_jam);
+  else tft.pushImage(bx, by, But_Width, But_Height, (uint16_t *)But_select);
+
+  uint16_t mainColor;
+  if (state == B_BLOCK) mainColor = TFT_SILVER;
+  else if (state == B_JAM) mainColor = TFT_WHITE;
+  else if (state == B_SELECT) mainColor = TFT_YELLOW;
+  else if (type == B_GOLD) mainColor = TFT_WHITE;
+  else mainColor = TFT_CYAN;
+
+  tftPlSetSize(1);
+  tftPlSetStyle(REG_T);
+    tftPlSetFont(T1516_T);
+  int chosenFont = T1516_T;
+  int chosenHeight = 16;
+  if (tftPlTextWidth(alt) > But_Width - 6) {
+    tftPlSetFont(T1012_T);
+    chosenFont = T1012_T;
+    chosenHeight = 12;
   }
-  if (screenV) spr.pushSprite(but[id].xPosV, but[id].yPosV); else  spr.pushSprite(but[id].xPosH, but[id].yPosH);
-  spr.deleteSprite(); 
+  tftPlSetDatum(BC_T);
+  int cx = bx + (But_Width / 2);
+  int cy = by + (But_Height + chosenHeight) / 2;
+
+  tftPlSetColor(mainColor, TFT_TRANS);
+  tftPlPrint(alt, cx + 1, cy);
+
+  if (state != B_JAM && state != B_SELECT) {
+    uint16_t shadowColor = (state == B_BLOCK || type != B_GOLD) ? TFT_BLACK : TFT_OLIVE;
+    tftPlSetColor(shadowColor, TFT_TRANS);
+	tftPlSetFont(chosenFont);						 
+    tftPlPrint(alt, cx, cy - 1);
+  }
 }
 
 //=======================================================================================
@@ -7030,7 +7261,6 @@ void screenRotate() {
   }
 }
 
-// Testowe wyświetlenie danych na ekran
 //=======================================================================================
 void view(String text, int x, int y) {
   //=======================================================================================
