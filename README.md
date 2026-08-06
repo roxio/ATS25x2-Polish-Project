@@ -1,5 +1,43 @@
 # Historia zmian
 
+## v0.15PL (06.08.2026)
+
+### Kalibracja akumulatora, wykres RSSI oraz kolejne usprawnienia interfejsu
+
+W tej wersji dodano możliwość kalibracji wskaźnika baterii, wykres historii siły sygnału RSSI oraz kolejne usprawnienia interfejsu użytkownika. Rozszerzono konfigurację EEPROM, poprawiono obsługę Wi-Fi i uporządkowano kod odpowiedzialny za konfigurację oraz wyświetlanie danych.
+
+### Dodano
+
+- **Kalibrację akumulatora**
+
+  - konfigurowalne minimalne i maksymalne napięcie,
+  - dokładniejsze wyznaczanie poziomu naładowania.
+
+- **Wykres historii RSSI**
+
+  - bieżący wykres zmian siły sygnału,
+  - możliwość włączenia lub wyłączenia funkcji.
+
+- **Nowe opcje konfiguracji**
+
+  - możliwość wyłączenia wygaszacza podczas skanowania pasma,
+  - zapis nowych ustawień w pamięci EEPROM.
+
+### Zmieniono
+
+- przebudowano sposób wyświetlania tekstu i przycisków,
+- odświeżono ekran startowy oraz wyświetlanie logo,
+- usprawniono konfigurację i obsługę sieci Wi-Fi,
+- rozszerzono strukturę danych zapisywanych w EEPROM,
+- zaktualizowano informacje o wersji programu.
+
+### Poprawiono
+
+- dokładność wskazań poziomu naładowania akumulatora,
+- zgodność z wcześniejszymi wersjami danych zapisanych w EEPROM,
+- inicjalizację urządzenia i obsługę wyświetlacza podczas uruchamiania,
+- organizację kodu oraz stabilność działania programu.
+
 ## v0.14PL (03.08.2026)
 ### Wygaszacz ekranu oraz usprawnienia zarządzania konfiguracją Wi-Fi
 
