@@ -159,6 +159,6 @@ But but[] PROGMEM = {
   {4,   L_SETUP,      NULL,    "",       80,  240,  320,  240},
   {4,   L_SETUP,      NULL,    "",       80,  280,  320,  240},
 
-  {1,   L_CONFIRM,    B_GREEN, "YES",    20,  100,   60,  100},
-  {0,   L_CONFIRM,    B_BLUE,  "NO",    140,  100,  180,  100}
+  {1,   L_CONFIRM,    B_GREEN, "TAK",    20,  100,   60,  100},
+  {0,   L_CONFIRM,    B_BLUE,  "NIE",    140,  100,  180,  100}
 };

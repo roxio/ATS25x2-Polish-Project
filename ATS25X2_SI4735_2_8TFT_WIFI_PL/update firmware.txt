@@ -1,4 +1,4 @@
-    Zainstaluj sterownik USB szeregowego z folderu CH341SER
+	Zainstaluj sterownik USB szeregowego z folderu CH341SER
 
     Zainstaluj Arduino IDE ze strony
     http://www.arduino.cc
@@ -15,11 +15,7 @@
     Zastąp w 'ścieżka użytkownika – Dokumenty – Arduino – libraries – TFT_eSPI' dwa pliki z folderu firmware:
     Setup1_ILI9341.h
     User_Setup_Select.h
-	
-	Edytuj plik INO i wstaw właściwą nazwę i hasło do wifi w sekcji:
-	String WIFI_SSID = "GUEST";     // SSID of local network
-	String WIFI_PASS = "TEST12345";     // Password on network
-	
+		
     Otwórz szkic INO w Arduino IDE
 
     Wybierz 'Narzędzia – Płytka – ESP32 Arduino – ESP32 Dev Module'

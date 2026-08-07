@@ -1914,13 +1914,13 @@ void drawProgress(uint8_t percentage, String text) {
   spr.pushSprite(27, 20);
   spr.deleteSprite();
 
-  tft.fillRect(0, 190, 320, 16, TFT_BLACK); // czyszczenie poprzedniego napisu (rozna dlugosc tekstow PL)
+  tft.fillRect(0, 190, 320, 16, TFT_BLACK); 
   tftPlSetSize(1);
   tftPlSetStyle(NRG_T);
   tftPlSetDatum(BL_T);
   tftPlSetFont(T1012_T);
   tftPlSetColor(TFT_YELLOW, TFT_TRANS);
-  tftPlPrint(text, 10, 202); // zamiast tft.drawString - obsluguje polskie znaki
+  tftPlPrint(text, 10, 202); 
   tft.drawRect(10, 208, 320 - 20, 15, TFT_WHITE);
   tft.fillRect(12, 210, 296 * percentage / 100, 12, TFT_BLUE);
 }
@@ -2960,7 +2960,7 @@ void loop() {
 
           if (n == B_FREQ) { //============================ Frequency input
             FREQbut = true;
-            drawList(L_FREQ, "FREQUENCY");
+            drawList(L_FREQ, "CZĘSTOTLIWOŚĆ");
             tft.fillRect(0, 80, 240, 40, TFT_NAVY);
             Decipoint = false;
             DisplayfreqNew = 0;
@@ -2973,7 +2973,7 @@ void loop() {
           if (n == B_MODE) { //============================= MODE
             if (currentMode != FM)  {
               Modebut = true;
-              drawList(L_MODE, "MODULATION");
+              drawList(L_MODE, "MODULACJA");
               FirstLayer = false;
               SecondLayer = true;
             } else ErrorBeep();
@@ -6909,7 +6909,7 @@ void saveSETUP() {
 	  saverDisableOnScan != prevsaverDisableOnScan or											 
       batMinV != prevbatMinV or batMaxV != prevbatMaxV or rssiHistoryOn != prevrssiHistoryOn or
       resetWifiConfig != prevresetWifiConfig) { 
-    int n = confirm("SAVE CHANGES?");
+    int n = confirm("ZAPISAĆ ZMIANY?");
     if (n == 1) {
       if (VHFon != prevVHFon) {
         VHFon = prevVHFon;

@@ -1,172 +1,493 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-<meta charset="UTF-8">
-<title>ATS25x2 RGB565 Converter 265x120</title>
-
-<style>
-body{
-    font-family:Arial;
-    background:#222;
-    color:white;
-    padding:20px;
-}
-
-canvas{
-    border:1px solid #555;
-    margin-top:15px;
-    image-rendering:pixelated;
-}
-
-button{
-    padding:10px 20px;
-    margin-top:15px;
-    cursor:pointer;
-}
-
-textarea{
-    width:100%;
-    height:350px;
-    margin-top:15px;
-    background:#111;
-    color:#0f0;
-    font-family:Consolas;
-}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ATS25x2 RGB565 Converter</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #1e1e2f;
+      color: #eee;
+      padding: 20px;
+      margin: 0;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    h1 {
+      text-align: center;
+      font-weight: 300;
+      letter-spacing: 2px;
+      border-bottom: 1px solid #444;
+      padding-bottom: 15px;
+    }
+    .settings {
+      background: #2a2a3e;
+      border-radius: 10px;
+      padding: 20px;
+      margin: 20px 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px 30px;
+      align-items: flex-end;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .settings .group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-width: 100px;
+    }
+    .settings label {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #aaa;
+    }
+    .settings input,
+    .settings select {
+      background: #1a1a2a;
+      border: 1px solid #444;
+      color: #eee;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      width: 100%;
+    }
+    .settings input:focus,
+    .settings select:focus {
+      outline: none;
+      border-color: #6c8cff;
+    }
+    .settings input[type="file"] {
+      padding: 8px;
+      background: #1a1a2a;
+      border: 1px solid #555;
+      color: #eee;
+      cursor: pointer;
+    }
+    .settings button {
+      background: #4a6cf7;
+      border: none;
+      color: white;
+      padding: 8px 20px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .settings button:hover {
+      background: #3a5cd7;
+    }
+    .panels {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      margin: 20px 0;
+    }
+    .panel {
+      flex: 1 1 300px;
+      background: #2a2a3e;
+      border-radius: 10px;
+      padding: 15px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .panel h3 {
+      margin: 0 0 10px 0;
+      font-weight: 300;
+      text-align: center;
+      color: #bbb;
+    }
+    .panel canvas {
+      width: 100%;
+      height: auto;
+      image-rendering: pixelated;
+      background: #111;
+      border-radius: 6px;
+      display: block;
+      border: 1px solid #444;
+    }
+    .info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 10px 0;
+      color: #aaa;
+      font-size: 0.9rem;
+    }
+    textarea {
+      width: 100%;
+      min-height: 350px;
+      background: #111;
+      color: #0f0;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 13px;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid #444;
+      resize: vertical;
+      margin-top: 10px;
+    }
+    .actions {
+      display: flex;
+      gap: 15px;
+      flex-wrap: wrap;
+      margin: 10px 0 20px 0;
+    }
+    .actions button {
+      background: #4a6cf7;
+      border: none;
+      color: white;
+      padding: 10px 25px;
+      border-radius: 6px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .actions button:hover {
+      background: #3a5cd7;
+    }
+    .actions button.secondary {
+      background: #555;
+    }
+    .actions button.secondary:hover {
+      background: #666;
+    }
+    .badge {
+      background: #3a3a5a;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+    }
+    @media (max-width: 700px) {
+      .settings {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .panels {
+        flex-direction: column;
+      }
+    }
+  </style>
 </head>
-
 <body>
+<div class="container">
+  <h1>🖼️ Konwerter obrazów</h1>
 
-<h2>Konwerter obrazów → RGB565 (265x120)</h2>
+  <!-- Ustawienia -->
+  <div class="settings">
+    <div class="group">
+      <label>Szerokość (px)</label>
+      <input type="number" id="width" value="265" min="1" max="800">
+    </div>
+    <div class="group">
+      <label>Wysokość (px)</label>
+      <input type="number" id="height" value="120" min="1" max="600">
+    </div>
+    <div class="group">
+      <label>Skalowanie</label>
+      <select id="scaleMode">
+        <option value="contain">Zachowaj proporcje</option>
+        <option value="stretch">Rozciągnij</option>
+      </select>
+    </div>
+    <div class="group">
+      <label>Kolejność kolorów</label>
+      <select id="colorOrder">
+		<option value="rgb">RGB (standard)</option>
+        <option value="bgr">BGR (jak w oryginale)</option>     
+      </select>
+    </div>
+    <div class="group">
+      <label>Kolejność bajtów (Endianness)</label>
+      <select id="endianness">
+		<option value="little">Little Endian (LSB first)</option>
+        <option value="big">Big Endian (MSB first)</option>
+      </select>
+    </div>
+    <div class="group">
+      <label>Format wyjściowy</label>
+      <select id="outputFormat">
+        <option value="progmem">PROGMEM (AVR)</option>
+        <option value="const">const uint16_t</option>
+        <option value="array">uint16_t (bez const)</option>
+      </select>
+    </div>
+    <div class="group">
+      <label>Nazwa zmiennej</label>
+      <input type="text" id="varName" value="logo">
+    </div>
+    <div class="group">
+      <label>Wybierz obraz</label>
+      <input type="file" id="file" accept=".jpg,.jpeg,.png,.gif,.bmp,.webp">
+    </div>
+    <div class="group">
+      <button id="convertBtn">▶ Konwertuj</button>
+    </div>
+  </div>
 
-<input type="file" id="file" accept=".jpg,.jpeg,.png,.gif,.bmp,.webp">
+  <!-- Dwa panele z podglądem -->
+  <div class="panels">
+    <div class="panel">
+      <h3>📷 Oryginał (skalowany)</h3>
+      <canvas id="canvasOriginal"></canvas>
+    </div>
+    <div class="panel">
+      <h3>🔁 Po konwersji RGB565</h3>
+      <canvas id="canvasPreview"></canvas>
+    </div>
+  </div>
 
-<br>
+  <!-- Info i akcje -->
+  <div class="info">
+    <span id="pixelCount">Liczba pikseli: 0</span>
+    <span id="memorySize" class="badge">Rozmiar danych: 0 B</span>
+  </div>
 
-<canvas id="canvas" width="265" height="120"></canvas>
+  <div class="actions">
+    <button id="downloadBtn">⬇️ Pobierz logo.h</button>
+    <button id="copyBtn" class="secondary">📋 Kopiuj do schowka</button>
+  </div>
 
-<br>
-
-<button id="download">Pobierz logo.h</button>
-
-<textarea id="output"></textarea>
+  <!-- Pole z kodem -->
+  <textarea id="output" readonly></textarea>
+</div>
 
 <script>
+  (function() {
+    // Elementy DOM
+    const fileInput = document.getElementById('file');
+    const widthInput = document.getElementById('width');
+    const heightInput = document.getElementById('height');
+    const scaleModeSelect = document.getElementById('scaleMode');
+    const colorOrderSelect = document.getElementById('colorOrder');
+    const endiannessSelect = document.getElementById('endianness');
+    const outputFormatSelect = document.getElementById('outputFormat');
+    const varNameInput = document.getElementById('varName');
+    const canvasOrig = document.getElementById('canvasOriginal');
+    const canvasPrev = document.getElementById('canvasPreview');
+    const ctxOrig = canvasOrig.getContext('2d');
+    const ctxPrev = canvasPreview.getContext('2d');
+    const outputText = document.getElementById('output');
+    const pixelCountSpan = document.getElementById('pixelCount');
+    const memorySizeSpan = document.getElementById('memorySize');
+    const convertBtn = document.getElementById('convertBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const copyBtn = document.getElementById('copyBtn');
 
-const WIDTH=265;
-const HEIGHT=120;
+    let originalImage = null;
 
-const canvas=document.getElementById("canvas");
-const ctx=canvas.getContext("2d");
+    function getDimensions() {
+      let w = parseInt(widthInput.value) || 265;
+      let h = parseInt(heightInput.value) || 120;
+      if (w < 1) w = 1;
+      if (h < 1) h = 1;
+      return { width: w, height: h };
+    }
 
-document.getElementById("file").onchange=e=>{
+    // Konwersja RGB na 16-bit (RGB565) – wewnętrznie zawsze Big Endian (MSB first)
+    function rgb565(r, g, b, order) {
+      let rr, gg, bb;
+      if (order === 'bgr') {
+        rr = g;
+        gg = b;
+        bb = r;
+      } else {
+        rr = r;
+        gg = g;
+        bb = b;
+      }
+      return ((rr & 0xF8) << 8) | ((gg & 0xFC) << 3) | (bb >> 3);
+    }
 
-const file=e.target.files[0];
-if(!file) return;
+    // Odczyt 16-bit i konwersja na RGB888 (do podglądu)
+    function from565(pixel565, order) {
+      let r = (pixel565 >> 11) & 0x1F;
+      let g = (pixel565 >> 5) & 0x3F;
+      let b = pixel565 & 0x1F;
+      let rr = (r * 255) / 31;
+      let gg = (g * 255) / 63;
+      let bb = (b * 255) / 31;
+      if (order === 'bgr') {
+        return { r: Math.round(bb), g: Math.round(gg), b: Math.round(rr) };
+      } else {
+        return { r: Math.round(rr), g: Math.round(gg), b: Math.round(bb) };
+      }
+    }
 
-const img=new Image();
+    function processImage() {
+      if (!originalImage) {
+        alert('Najpierw wczytaj obraz!');
+        return;
+      }
 
-img.onload=()=>{
+      const dim = getDimensions();
+      const W = dim.width;
+      const H = dim.height;
+      const scaleMode = scaleModeSelect.value;
+      const order = colorOrderSelect.value;
+      const endian = endiannessSelect.value;
+      const format = outputFormatSelect.value;
+      const varName = varNameInput.value.trim() || 'logo';
 
-ctx.fillStyle="black";
-ctx.fillRect(0,0,WIDTH,HEIGHT);
+      canvasOrig.width = W;
+      canvasOrig.height = H;
+      canvasPrev.width = W;
+      canvasPrev.height = H;
 
-const scale=Math.min(
-WIDTH/img.width,
-HEIGHT/img.height
-);
+      ctxOrig.fillStyle = 'black';
+      ctxOrig.fillRect(0, 0, W, H);
+      let drawW, drawH, dx, dy;
+      if (scaleMode === 'contain') {
+        const scale = Math.min(W / originalImage.width, H / originalImage.height);
+        drawW = originalImage.width * scale;
+        drawH = originalImage.height * scale;
+        dx = (W - drawW) / 2;
+        dy = (H - drawH) / 2;
+      } else {
+        drawW = W;
+        drawH = H;
+        dx = 0;
+        dy = 0;
+      }
+      ctxOrig.drawImage(originalImage, dx, dy, drawW, drawH);
 
-const w=img.width*scale;
-const h=img.height*scale;
+      const imgData = ctxOrig.getImageData(0, 0, W, H);
+      const data = imgData.data;
+      const pixels = W * H;
 
-const x=(WIDTH-w)/2;
-const y=(HEIGHT-h)/2;
+      const buffer16 = new Uint16Array(pixels);
+      for (let i = 0; i < pixels; i++) {
+        const idx = i * 4;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        buffer16[i] = rgb565(r, g, b, order);
+      }
 
-ctx.drawImage(img,x,y,w,h);
+      // Generowanie kodu źródłowego z uwzględnieniem endianness
+      let codeLines = [];
+      if (format === 'progmem') {
+        codeLines.push(`const unsigned short ${varName}[${pixels}] PROGMEM = {`);
+      } else if (format === 'const') {
+        codeLines.push(`const uint16_t ${varName}[${pixels}] = {`);
+      } else {
+        codeLines.push(`uint16_t ${varName}[${pixels}] = {`);
+      }
 
-convert();
+      let line = '';
+      for (let i = 0; i < pixels; i++) {
+        let val = buffer16[i];
+        // Jeśli Little Endian, zamień bajty
+        if (endian === 'little') {
+          val = ((val & 0xFF) << 8) | (val >> 8);
+        }
+        const hex = '0x' + val.toString(16).toUpperCase().padStart(4, '0');
+        line += hex;
+        if (i < pixels - 1) line += ',';
+        if ((i + 1) % 12 === 0) {
+          codeLines.push(line);
+          line = '';
+        }
+      }
+      if (line) codeLines.push(line);
+      codeLines.push('};');
+      const code = codeLines.join('\n');
+      outputText.value = code;
 
-};
+      pixelCountSpan.textContent = `Liczba pikseli: ${pixels}`;
+      const bytes = pixels * 2;
+      if (bytes < 1024) memorySizeSpan.textContent = `Rozmiar danych: ${bytes} B`;
+      else if (bytes < 1024 * 1024) memorySizeSpan.textContent = `Rozmiar danych: ${(bytes / 1024).toFixed(1)} KB`;
+      else memorySizeSpan.textContent = `Rozmiar danych: ${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 
-img.src=URL.createObjectURL(file);
+      // Podgląd – zawsze odtwarzamy z buffer16 (Big Endian wewnętrznie)
+      const previewData = ctxPrev.createImageData(W, H);
+      const pData = previewData.data;
+      for (let i = 0; i < pixels; i++) {
+        const idx = i * 4;
+        const val = buffer16[i];
+        const rgb = from565(val, order);
+        pData[idx] = rgb.r;
+        pData[idx + 1] = rgb.g;
+        pData[idx + 2] = rgb.b;
+        pData[idx + 3] = 255;
+      }
+      ctxPrev.putImageData(previewData, 0, 0);
+    }
 
-}
+    // Obsługa wczytania pliku
+    fileInput.addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(ev) {
+        const img = new Image();
+        img.onload = function() {
+          originalImage = img;
+          processImage();
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
 
-function rgb565(r,g,b){
+    convertBtn.addEventListener('click', processImage);
 
-const rr = g;
-const gg = b;
-const bb = r;
+    // Automatyczna konwersja po zmianie ustawień
+    [widthInput, heightInput, scaleModeSelect, colorOrderSelect, endiannessSelect, outputFormatSelect, varNameInput].forEach(el => {
+      el.addEventListener('change', function() {
+        if (originalImage) processImage();
+      });
+      el.addEventListener('input', function() {
+        if (el === varNameInput && originalImage) processImage();
+      });
+    });
 
-return ((rr&0xF8)<<8) |
-       ((gg&0xFC)<<3) |
-       (bb>>3);
+    downloadBtn.addEventListener('click', function() {
+      const code = outputText.value;
+      if (!code) {
+        alert('Brak danych do zapisania.');
+        return;
+      }
+      const blob = new Blob([code], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'logo.h';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    });
 
-}
+    copyBtn.addEventListener('click', function() {
+      const code = outputText.value;
+      if (!code) {
+        alert('Brak danych do skopiowania.');
+        return;
+      }
+      navigator.clipboard.writeText(code).then(() => {
+        alert('Skopiowano do schowka!');
+      }).catch(() => {
+        outputText.select();
+        document.execCommand('copy');
+        alert('Skopiowano do schowka!');
+      });
+    });
 
-function convert(){
-
-const img=ctx.getImageData(0,0,WIDTH,HEIGHT);
-
-const d=img.data;
-
-let out=[];
-
-out.push("const unsigned short logo["+(WIDTH*HEIGHT)+"] PROGMEM = {");
-
-let line="";
-
-for(let i=0;i<WIDTH*HEIGHT;i++){
-
-const p=i*4;
-
-const r=d[p];
-const g=d[p+1];
-const b=d[p+2];
-
-const c=rgb565(r,g,b);
-
-line+="0x"+c.toString(16).toUpperCase().padStart(4,"0");
-
-if(i<WIDTH*HEIGHT-1)
-line+=",";
-
-if((i+1)%12==0){
-
-out.push(line);
-
-line="";
-
-}
-
-}
-
-if(line.length)
-out.push(line);
-
-out.push("};");
-
-document.getElementById("output").value=out.join("\n");
-
-}
-
-document.getElementById("download").onclick=()=>{
-
-const txt=document.getElementById("output").value;
-
-const blob=new Blob([txt],{type:"text/plain"});
-
-const a=document.createElement("a");
-
-a.href=URL.createObjectURL(blob);
-
-a.download="logo.h";
-
-a.click();
-
-}
-
+    (function init() {
+      const dim = getDimensions();
+      canvasOrig.width = dim.width;
+      canvasOrig.height = dim.height;
+      canvasPrev.width = dim.width;
+      canvasPrev.height = dim.height;
+    })();
+  })();
 </script>
-
 </body>
 </html>
