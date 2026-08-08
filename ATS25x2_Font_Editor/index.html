@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROGMEM font editor — live wiev</title>
+<style>
+  :root{
+    --bg:#0a0c0f;
+    --panel:#12161b;
+    --panel2:#171c22;
+    --line:#262c34;
+    --line-soft:#1c2128;
+    --amber:#ffb300;
+    --amber-dim:#7a5a10;
+    --cyan:#3ecfe0;
+    --cyan-dim:#1d4a52;
+    --red:#e0554f;
+    --text:#e9e7e1;
+    --muted:#8b93a1;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, "Roboto Mono", monospace;
+    --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:
+      radial-gradient(ellipse at top, #12161c 0%, var(--bg) 55%);
+    color:var(--text);
+    font-family:var(--sans);
+  }
+  body{ display:flex; flex-direction:column; min-height:100vh; }
+
+  header{
+    padding:14px 20px;
+    border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg, #14181e, #101318);
+    display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  }
+  .brand{ display:flex; align-items:baseline; gap:10px; }
+  .brand .dot{
+    width:10px;height:10px;border-radius:2px;background:var(--amber);
+    box-shadow:0 0 8px 2px rgba(255,179,0,.65);
+    display:inline-block;
+  }
+  .brand h1{
+    font-size:15px; letter-spacing:.06em; text-transform:uppercase;
+    margin:0; font-weight:600; color:var(--text);
+  }
+  .brand small{ color:var(--muted); font-family:var(--mono); font-size:11px; }
+
+  .toolbar{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-left:auto; }
+  button{
+    font-family:var(--sans); font-size:12.5px; font-weight:600;
+    letter-spacing:.02em;
+    background:var(--panel2); color:var(--text);
+    border:1px solid var(--line); border-radius:6px;
+    padding:8px 12px; cursor:pointer;
+    transition:border-color .12s, background .12s, transform .05s;
+  }
+  button:hover{ border-color:#3a4149; background:#1b2128; }
+  button:active{ transform:translateY(1px); }
+  button.primary{
+    background:linear-gradient(180deg,#ffc32e,#e6a100); color:#1a1200; border-color:#c98d00;
+  }
+  button.primary:hover{ filter:brightness(1.06); }
+  button.ghost{ background:transparent; }
+  button.danger{ color:#ffd7d5; border-color:#5c2b29; }
+  button.danger:hover{ background:#291515; }
+  button:disabled{ opacity:.4; cursor:not-allowed; }
+  input[type=file]{ display:none; }
+
+  label.field{
+    display:flex; flex-direction:column; gap:3px; font-size:10.5px;
+    color:var(--muted); text-transform:uppercase; letter-spacing:.05em;
+  }
+  label.field input, label.field select{
+    font-family:var(--mono); font-size:13px; color:var(--text);
+    background:var(--panel); border:1px solid var(--line); border-radius:5px;
+    padding:6px 8px; width:64px;
+  }
+  label.field select{ width:auto; min-width:120px; }
+  label.field input:focus, label.field select:focus{ outline:2px solid var(--cyan); outline-offset:1px; }
+
+  main{ flex:1; display:flex; min-height:0; }
+
+  /* --- char map sidebar --- */
+  .charmap{
+    width:260px; border-right:1px solid var(--line);
+    background:var(--panel); display:flex; flex-direction:column; min-height:0;
+  }
+  .charmap .head{
+    padding:10px 12px; border-bottom:1px solid var(--line-soft);
+    font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .charmap .head span.count{ color:var(--cyan); font-family:var(--mono); }
+  .grid{
+    overflow-y:auto; padding:10px; display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(52px,1fr));
+    gap:6px; align-content:start;
+  }
+  .tile{
+    background:var(--panel2); border:1px solid var(--line); border-radius:6px;
+    padding:5px 3px 4px; cursor:pointer; text-align:center; position:relative;
+  }
+  .tile:hover{ border-color:#4a525c; }
+  .tile.sel{ border-color:var(--amber); box-shadow:0 0 0 1px var(--amber) inset; }
+  .tile.cmp{ border-color:var(--cyan); }
+  .tile canvas{ display:block; margin:0 auto 3px; image-rendering:pixelated; }
+  .tile .idx{ font-family:var(--mono); font-size:9px; color:var(--muted); }
+  .tile .lbl{ font-family:var(--mono); font-size:11px; color:var(--text); }
+
+  /* --- editor center --- */
+  .editor-wrap{ flex:1; display:flex; flex-direction:column; min-width:0; }
+  .editor-toolbar{
+    padding:10px 16px; border-bottom:1px solid var(--line);
+    display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap;
+    background:var(--panel);
+  }
+  .editor-canvas-area{
+    flex:1; display:flex; align-items:center; justify-content:center;
+    overflow:auto; padding:24px;
+    background:
+      repeating-linear-gradient(45deg, #0d1013 0 12px, #0e1114 12px 24px);
+  }
+  .pixel-frame{
+    background:#05070a; border:1px solid var(--line); border-radius:10px;
+    padding:22px; box-shadow: 0 0 0 1px #000, 0 20px 60px -20px rgba(0,0,0,.8);
+  }
+  #editorGrid{ display:grid; gap:1px; background:var(--line-soft); border:1px solid var(--line-soft); }
+  .cell{
+    background:#0c0f13; cursor:pointer; position:relative;
+  }
+  .cell.on{
+    background: radial-gradient(circle at 35% 30%, #ffd873, var(--amber) 60%, var(--amber-dim) 100%);
+    box-shadow: 0 0 6px 1px rgba(255,179,0,.55);
+  }
+  .cell.cmp-on::after{
+    content:''; position:absolute; inset:2px; background:var(--cyan); opacity:.35; border-radius:1px;
+  }
+  .cell.range-row{ box-shadow: inset 0 0 0 9999px rgba(62,207,224,.05); }
+  .cell.ink-edge{ box-shadow: inset 2px 0 0 0 var(--amber); }
+  .cell.ink-edge-cmp{ box-shadow: inset -2px 0 0 0 var(--cyan); }
+
+  .nudge-pad{ display:grid; grid-template-columns:repeat(3,28px); grid-template-rows:repeat(3,28px); gap:3px; }
+  .nudge-pad button{ padding:0; display:flex; align-items:center; justify-content:center; font-size:14px; }
+
+  /* --- right panel --- */
+  .side{
+    width:340px; border-left:1px solid var(--line); background:var(--panel);
+    display:flex; flex-direction:column; overflow-y:auto;
+  }
+  .side section{ padding:14px 16px; border-bottom:1px solid var(--line-soft); }
+  .side h2{
+    margin:0 0 10px; font-size:10.5px; text-transform:uppercase; letter-spacing:.07em;
+    color:var(--muted); font-weight:700;
+  }
+  .row{ display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .row:last-child{ margin-bottom:0; }
+  .row label{ font-size:11.5px; color:var(--muted); width:78px; flex:none; }
+  .row input[type=text], .row input[type=number]{
+    font-family:var(--mono); font-size:13px; color:var(--text);
+    background:var(--panel2); border:1px solid var(--line); border-radius:5px;
+    padding:6px 8px; flex:1; min-width:0;
+  }
+  textarea#hexBox{
+    width:100%; min-height:110px; font-family:var(--mono); font-size:12px;
+    background:#05070a; color:#ffd77a; border:1px solid var(--line); border-radius:6px;
+    padding:10px; resize:vertical; line-height:1.5;
+  }
+  textarea#hexBox:focus{ outline:2px solid var(--cyan); outline-offset:1px; }
+  .hexline{ font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:6px; word-break:break-all; }
+  .btnrow{ display:flex; gap:8px; flex-wrap:wrap; }
+  .btnrow button{ flex:1; }
+
+  .status{
+    padding:9px 16px; border-top:1px solid var(--line); background:var(--panel);
+    font-family:var(--mono); font-size:11.5px; color:var(--muted);
+    display:flex; justify-content:space-between; gap:12px;
+  }
+  .status b{ color:var(--cyan); font-weight:600; }
+  .status .ok{ color:#7fe08a; }
+  .status .warn{ color:var(--amber); }
+
+  .empty-hint{
+    margin:auto; text-align:center; color:var(--muted); max-width:360px; padding:30px;
+  }
+  .empty-hint .dot{
+    width:14px;height:14px;border-radius:3px;background:var(--amber); margin:0 auto 14px;
+    box-shadow:0 0 16px 3px rgba(255,179,0,.55);
+  }
+  .empty-hint h3{ color:var(--text); font-size:15px; margin:0 0 8px; }
+  .empty-hint p{ font-size:12.5px; line-height:1.6; margin:0 0 6px; }
+
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb{ background:#262c34; border-radius:6px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="dot"></span>
+    <h1>Edytor czcionek PROGMEM</h1>
+  </div>
+  <small>· TFT_eSPI / Arduino</small>
+  <div class="toolbar">
+    <label class="field">Kolumny (px)
+      <input type="number" id="cfgCols" min="1" max="40" value="7">
+    </label>
+    <label class="field">Wiersze (px)
+      <input type="number" id="cfgRows" min="1" max="16" value="16">
+    </label>
+    <label class="field">Kod startowy
+      <input type="number" id="cfgStart" min="0" max="255" value="32">
+    </label>
+    <label class="field">Zoom
+      <input type="number" id="cfgZoom" min="6" max="40" value="20">
+    </label>
+    <button class="ghost" id="btnNew">Nowa czcionka</button>
+    <button id="btnOpen">Otwórz plik .h</button>
+    <input type="file" id="fileInput" accept=".h,.hpp,text/plain">
+    <button class="primary" id="btnSave" disabled>Pobierz plik .h</button>
+  </div>
+</header>
+
+<main>
+  <div class="charmap">
+    <div class="head">Znaki <span class="count" id="charCount">0</span></div>
+    <div class="grid" id="charGrid"></div>
+  </div>
+
+  <div class="editor-wrap" id="editorWrap">
+    <div class="empty-hint" id="emptyHint">
+      <div class="dot"></div>
+      <h3>Brak wczytanej czcionki</h3>
+      <p>Otwórz istniejący plik <b>.h</b> w formacie PROGMEM (np. <code>Tahoma_10x12_pl.h</code>) albo stwórz nową czcionkę od zera.</p>
+      <p>Format bitmapy: każda kolumna = 16-bitowa wartość (2 bajty, little-endian), bit&nbsp;0 = górny piksel — dokładnie tak jak w projekcie ATS25X2.</p>
+    </div>
+  </div>
+
+  <div class="side" id="sidePanel" style="display:none">
+    <section>
+      <h2>Wybrany znak</h2>
+      <div class="row"><label>Indeks</label><input type="text" id="infoIndex" readonly></div>
+      <div class="row"><label>Kod znaku</label><input type="text" id="infoCode" readonly></div>
+      <div class="row"><label>Etykieta</label><input type="text" id="infoLabel" placeholder="np. Ć"></div>
+    </section>
+
+    <section>
+      <h2>Porównanie / nakładka</h2>
+      <div class="row"><label>Odnieś do</label>
+        <select id="cmpSelect" style="flex:1; font-family:var(--mono); background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:5px; padding:6px;">
+          <option value="-1">— brak —</option>
+        </select>
+      </div>
+      <div class="hexline" id="cmpInfo">Wybierz np. literę bazową ("c"), żeby wyrównać do niej akcent w "ć".</div>
+    </section>
+
+    <section>
+      <h2>Przesuwanie fragmentu</h2>
+      <div class="row"><label>Wiersze od–do</label>
+        <input type="number" id="rangeFrom" value="0" style="width:56px;flex:none;">
+        <span style="color:var(--muted)">–</span>
+        <input type="number" id="rangeTo" value="15" style="width:56px;flex:none;">
+      </div>
+      <div class="row" style="justify-content:center;">
+        <div class="nudge-pad">
+          <span></span><button id="nudgeUp" title="W górę">↑</button><span></span>
+          <button id="nudgeLeft" title="W lewo">←</button>
+          <button id="nudgeClear" title="Wyczyść zakres" style="font-size:10px;">✕</button>
+          <button id="nudgeRight" title="W prawo">→</button>
+          <span></span><button id="nudgeDown" title="W dół">↓</button><span></span>
+        </div>
+      </div>
+      <div class="hexline">Przesuwa tylko piksele z wybranego zakresu wierszy — idealne do poprawiania samego akcentu bez ruszania litery.</div>
+    </section>
+
+    <section>
+      <h2>Surowe bajty (edytowalne)</h2>
+      <textarea id="hexBox" spellcheck="false"></textarea>
+      <div class="btnrow" style="margin-top:8px;">
+        <button id="btnCopyGlyph">Kopiuj znak</button>
+        <button id="btnPasteGlyph">Wklej znak</button>
+        <button class="danger" id="btnClearGlyph">Wyczyść</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Linijka w pliku .h</h2>
+      <div class="hexline" id="linePreview" style="color:#ffd77a;"></div>
+    </section>
+  </div>
+</main>
+
+<div class="status">
+  <div>Plik: <b id="statFile">—</b> &nbsp;|&nbsp; Bajtów/znak: <b id="statBpg">—</b> &nbsp;|&nbsp; Tablica: <b id="statArrName">—</b>&nbsp;|&nbsp; Github RoXiO</div>
+  <div id="statMsg"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------------------------------------------------------------
+  // STATE
+  // ---------------------------------------------------------------
+  const state = {
+    cols: 7,
+    rows: 16,
+    startCode: 32,
+    zoom: 20,
+    arrayName: 'MyFont',
+    fileName: '',
+    headerLines: [],   // preserved comment lines before the array declaration
+    glyphs: [],        // { bytes:[...], label:'' }
+    selected: -1,
+    compare: -1,
+    rangeFrom: 0,
+    rangeTo: 15,
+    dragging: false,
+    dragValue: 1,
+  };
+
+  const $ = (id) => document.getElementById(id);
+
+  // ---------------------------------------------------------------
+  // BIT HELPERS  (column-major, 16-bit little-endian per column)
+  // ---------------------------------------------------------------
+  function getBit(bytes, c, r){
+    const val = bytes[c*2] | (bytes[c*2+1] << 8);
+    return (val >> r) & 1;
+  }
+  function setBit(bytes, c, r, on){
+    let val = bytes[c*2] | (bytes[c*2+1] << 8);
+    if (on) val |= (1 << r); else val &= ~(1 << r) & 0xFFFF;
+    bytes[c*2] = val & 0xFF;
+    bytes[c*2+1] = (val >> 8) & 0xFF;
+  }
+  function rightmostInk(bytes, rowFrom, rowTo){
+    let mx = -1;
+    for (let c=0; c<state.cols; c++){
+      for (let r=rowFrom; r<=rowTo; r++){
+        if (getBit(bytes,c,r)) mx = c;
+      }
+    }
+    return mx;
+  }
+  function leftmostInk(bytes, rowFrom, rowTo){
+    for (let c=0; c<state.cols; c++){
+      for (let r=rowFrom; r<=rowTo; r++){
+        if (getBit(bytes,c,r)) return c;
+      }
+    }
+    return -1;
+  }
+
+  // ---------------------------------------------------------------
+  // PARSER — reads a PROGMEM uint8_t array, one glyph per line
+  // ---------------------------------------------------------------
+  function parseHFile(text){
+    const lines = text.split(/\r\n|\n/);
+    let started = false;
+    let arrayName = 'MyFont';
+    const headerLines = [];
+    const dataLines = []; // {tokens:[...], comment: string|null}
+
+    for (const rawLine of lines){
+      if (!started){
+        const m = rawLine.match(/const\s+uint8_t\s+(\w+)\s*\[\s*\]\s*PROGMEM\s*=/);
+        if (m){
+          arrayName = m[1];
+          started = true;
+          continue;
+        }
+        headerLines.push(rawLine);
+        continue;
+      }
+      const commentSplit = rawLine.split('//');
+      const codePart = commentSplit[0];
+      const comment = commentSplit.length > 1 ? commentSplit.slice(1).join('//').trim() : null;
+      const tokens = codePart.match(/0x[0-9A-Fa-f]{2}/g);
+      if (tokens && tokens.length){
+        dataLines.push({ tokens: tokens.map(t => parseInt(t,16)), comment });
+      }
+    }
+
+    if (dataLines.length === 0){
+      throw new Error('Nie znaleziono danych PROGMEM w pliku (spodziewano się "const uint8_t NAZWA[] PROGMEM = { ... };").');
+    }
+
+    // detect bytes-per-glyph = most common token count per line
+    const counts = {};
+    for (const dl of dataLines) counts[dl.tokens.length] = (counts[dl.tokens.length]||0) + 1;
+    let bytesPerGlyph = Object.keys(counts).reduce((a,b) => counts[a] > counts[b] ? a : b);
+    bytesPerGlyph = parseInt(bytesPerGlyph, 10);
+    if (bytesPerGlyph % 2 !== 0) bytesPerGlyph += 1; // must be even (2 bytes/column)
+
+    // Case A: every (or almost every) line already has exactly bytesPerGlyph tokens -> 1 glyph/line
+    const oneGlyphPerLine = dataLines.every(dl => dl.tokens.length === bytesPerGlyph);
+
+    const glyphs = [];
+    if (oneGlyphPerLine){
+      for (const dl of dataLines){
+        glyphs.push({ bytes: dl.tokens.slice(), label: dl.comment || '' });
+      }
+    } else {
+      // Case B: flatten all tokens and slice into fixed chunks (labels lost)
+      const flat = [];
+      for (const dl of dataLines) flat.push(...dl.tokens);
+      for (let i=0; i+bytesPerGlyph <= flat.length; i += bytesPerGlyph){
+        glyphs.push({ bytes: flat.slice(i, i+bytesPerGlyph), label:'' });
+      }
+    }
+
+    return {
+      arrayName,
+      headerLines,
+      cols: bytesPerGlyph/2,
+      glyphs
+    };
+  }
+
+  function buildHFile(){
+    const lines = [];
+    for (const h of state.headerLines){
+      if (h.trim().length) lines.push(h);
+    }
+    if (lines.length) lines.push('');
+    lines.push(`const uint8_t ${state.arrayName}[] PROGMEM = {`);
+    lines.push('');
+    for (const g of state.glyphs){
+      const hex = g.bytes.map(b => '0x' + b.toString(16).toUpperCase().padStart(2,'0')).join(', ') + ',';
+      lines.push(g.label ? `    ${hex} // ${g.label}` : `    ${hex}`);
+    }
+    lines.push('');
+    lines.push('};');
+    return lines.join('\r\n');
+  }
+
+  // ---------------------------------------------------------------
+  // RENDERING
+  // ---------------------------------------------------------------
+  function drawGlyphToCanvas(canvas, bytes, opts){
+    opts = opts || {};
+    const scale = opts.scale || 4;
+    const cols = state.cols, rows = state.rows;
+    canvas.width = cols*scale; canvas.height = rows*scale;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#05070a';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = opts.color || '#ffb300';
+    for (let c=0;c<cols;c++){
+      for (let r=0;r<rows;r++){
+        if (getBit(bytes,c,r)) ctx.fillRect(c*scale, r*scale, scale, scale);
+      }
+    }
+  }
+
+  function labelFor(idx){
+    const g = state.glyphs[idx];
+    if (g.label) return g.label;
+    const code = state.startCode + idx;
+    if (code >= 32 && code <= 126) return String.fromCharCode(code);
+    return '·';
+  }
+
+  function renderCharMap(){
+    const grid = $('charGrid');
+    grid.innerHTML = '';
+    $('charCount').textContent = state.glyphs.length;
+    state.glyphs.forEach((g, i) => {
+      const tile = document.createElement('div');
+      tile.className = 'tile' + (i===state.selected ? ' sel':'') + (i===state.compare ? ' cmp':'');
+      const canvas = document.createElement('canvas');
+      drawGlyphToCanvas(canvas, g.bytes, {scale:3, color:'#ffb300'});
+      const idxEl = document.createElement('div');
+      idxEl.className='idx'; idxEl.textContent = '#'+i;
+      const lblEl = document.createElement('div');
+      lblEl.className='lbl'; lblEl.textContent = labelFor(i);
+      tile.appendChild(canvas); tile.appendChild(lblEl); tile.appendChild(idxEl);
+      tile.addEventListener('click', (e) => {
+        if (e.shiftKey){ state.compare = (state.compare===i) ? -1 : i; renderAll(); }
+        else { selectGlyph(i); }
+      });
+      grid.appendChild(tile);
+    });
+  }
+
+  function renderEditor(){
+    const wrap = $('editorGrid');
+    if (!wrap) return;
+    if (state.selected < 0) return;
+    const g = state.glyphs[state.selected];
+    const cmp = state.compare >= 0 ? state.glyphs[state.compare] : null;
+    const z = state.zoom;
+    wrap.style.gridTemplateColumns = `repeat(${state.cols}, ${z}px)`;
+    wrap.style.gridTemplateRows = `repeat(${state.rows}, ${z}px)`;
+    wrap.innerHTML = '';
+
+    const rf = clampRange();
+    const inkMain = rightmostInk(g.bytes, rf.from, rf.to);
+    const inkCmp = cmp ? rightmostInk(cmp.bytes, rf.from, rf.to) : -1;
+
+    for (let r=0;r<state.rows;r++){
+      for (let c=0;c<state.cols;c++){
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.style.width = z+'px'; cell.style.height = z+'px';
+        if (getBit(g.bytes,c,r)) cell.classList.add('on');
+        if (cmp && getBit(cmp.bytes,c,r) && !getBit(g.bytes,c,r)) cell.classList.add('cmp-on');
+        if (r>=rf.from && r<=rf.to) cell.classList.add('range-row');
+        if (c===inkMain && inkMain>=0) cell.classList.add('ink-edge');
+        if (cmp && c===inkCmp && inkCmp>=0) cell.classList.add('ink-edge-cmp');
+        cell.dataset.c = c; cell.dataset.r = r;
+        cell.addEventListener('mousedown', (e) => {
+          state.dragging = true;
+          state.dragValue = getBit(g.bytes,c,r) ? 0 : 1;
+          setBit(g.bytes,c,r,state.dragValue);
+          renderAll();
+          e.preventDefault();
+        });
+        cell.addEventListener('mouseenter', () => {
+          if (state.dragging){ setBit(g.bytes,c,r,state.dragValue); renderAll(); }
+        });
+        wrap.appendChild(cell);
+      }
+    }
+  }
+
+  document.addEventListener('mouseup', () => { state.dragging = false; });
+
+  function renderHexBox(){
+    if (state.selected < 0) return;
+    const g = state.glyphs[state.selected];
+    $('hexBox').value = g.bytes.map(b => '0x'+b.toString(16).toUpperCase().padStart(2,'0')).join(', ');
+    const hex = g.bytes.map(b => '0x'+b.toString(16).toUpperCase().padStart(2,'0')).join(', ') + ',';
+    $('linePreview').textContent = g.label ? `    ${hex} // ${g.label}` : `    ${hex}`;
+  }
+
+  function renderInfo(){
+    if (state.selected < 0) return;
+    const g = state.glyphs[state.selected];
+    $('infoIndex').value = '#' + state.selected + ' / ' + (state.glyphs.length-1);
+    const code = state.startCode + state.selected;
+    $('infoCode').value = code + '  (0x'+code.toString(16).toUpperCase()+')';
+    $('infoLabel').value = g.label || '';
+  }
+
+  function renderCompareSelect(){
+    const sel = $('cmpSelect');
+    const prev = state.compare;
+    sel.innerHTML = '<option value="-1">— brak —</option>';
+    state.glyphs.forEach((g,i) => {
+      if (i===state.selected) return;
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = `#${i}  ${labelFor(i)}`;
+      sel.appendChild(opt);
+    });
+    sel.value = prev;
+  }
+
+  function renderStatus(){
+    $('statFile').textContent = state.fileName || '(nowa czcionka)';
+    $('statBpg').textContent = (state.cols*2) + ' (' + state.cols + ' kolumn × 2 B)';
+    $('statArrName').textContent = state.arrayName;
+  }
+
+  function clampRange(){
+    let from = Math.max(0, Math.min(state.rangeFrom, state.rows-1));
+    let to = Math.max(0, Math.min(state.rangeTo, state.rows-1));
+    if (from > to) [from,to] = [to,from];
+    return {from,to};
+  }
+
+  function renderAll(){
+    renderCharMap();
+    renderEditor();
+    renderHexBox();
+    renderInfo();
+    renderCompareSelect();
+    renderStatus();
+  }
+
+  function selectGlyph(i){
+    state.selected = i;
+    renderAll();
+  }
+
+  // ---------------------------------------------------------------
+  // GLYPH-LEVEL OPERATIONS
+  // ---------------------------------------------------------------
+  function nudge(dc, dr){
+    if (state.selected < 0) return;
+    const g = state.glyphs[state.selected];
+    const rf = clampRange();
+    const bits = [];
+    for (let r=rf.from; r<=rf.to; r++)
+      for (let c=0;c<state.cols;c++)
+        if (getBit(g.bytes,c,r)) bits.push([c,r]);
+    for (const [c,r] of bits) setBit(g.bytes,c,r,0);
+    for (const [c,r] of bits){
+      const nc=c+dc, nr=r+dr;
+      if (nc>=0 && nc<state.cols && nr>=0 && nr<state.rows) setBit(g.bytes,nc,nr,1);
+    }
+    renderAll();
+  }
+
+  function clearRange(){
+    if (state.selected < 0) return;
+    const g = state.glyphs[state.selected];
+    const rf = clampRange();
+    for (let r=rf.from; r<=rf.to; r++)
+      for (let c=0;c<state.cols;c++)
+        setBit(g.bytes,c,r,0);
+    renderAll();
+  }
+
+  let clipboard = null;
+
+  // ---------------------------------------------------------------
+  // EVENT WIRING
+  // ---------------------------------------------------------------
+  $('btnOpen').addEventListener('click', () => $('fileInput').click());
+
+  $('fileInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = parseHFile(reader.result);
+        state.arrayName = parsed.arrayName;
+        state.headerLines = parsed.headerLines;
+        state.cols = parsed.cols;
+        state.glyphs = parsed.glyphs;
+        state.fileName = file.name;
+        state.selected = 0;
+        state.compare = -1;
+        state.rangeFrom = 0;
+        state.rangeTo = state.rows-1;
+        $('cfgCols').value = state.cols;
+        $('rangeFrom').value = state.rangeFrom;
+        $('rangeTo').value = state.rangeTo;
+        showEditor();
+        renderAll();
+        setMsg(`Wczytano ${state.glyphs.length} znaków, ${state.cols} kolumn/znak.`, 'ok');
+      } catch(err){
+        setMsg('Błąd wczytywania: ' + err.message, 'warn');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  $('btnNew').addEventListener('click', () => {
+    const cols = parseInt(prompt('Szerokość znaku w pikselach (kolumny):', '7'), 10) || 7;
+    const rows = parseInt(prompt('Wysokość znaku w pikselach (max 16):', '16'), 10) || 16;
+    const count = parseInt(prompt('Ile znaków utworzyć?', '95'), 10) || 95;
+    const start = parseInt(prompt('Kod pierwszego znaku (ASCII):', '32'), 10) || 32;
+    state.cols = Math.max(1, Math.min(40, cols));
+    state.rows = Math.max(1, Math.min(16, rows));
+    state.startCode = start;
+    state.arrayName = 'NowaCzcionka';
+    state.headerLines = ['// Nowa czcionka utworzona w edytorze', `// Rozmiar: ${state.cols} x ${state.rows}`];
+    state.glyphs = [];
+    for (let i=0;i<count;i++){
+      state.glyphs.push({ bytes: new Array(state.cols*2).fill(0), label:'' });
+    }
+    state.fileName = '';
+    state.selected = 0;
+    state.compare = -1;
+    state.rangeFrom = 0; state.rangeTo = state.rows-1;
+    $('cfgCols').value = state.cols;
+    $('cfgRows').value = state.rows;
+    $('cfgStart').value = state.startCode;
+    $('rangeFrom').value = 0; $('rangeTo').value = state.rows-1;
+    showEditor();
+    renderAll();
+    setMsg('Utworzono nową, pustą czcionkę.', 'ok');
+  });
+
+  $('btnSave').addEventListener('click', () => {
+    const text = buildHFile();
+    const blob = new Blob([text], {type:'text/plain'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = state.fileName || (state.arrayName + '.h');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setMsg('Pobrano plik ' + (state.fileName || (state.arrayName+'.h')), 'ok');
+  });
+
+  $('cfgCols').addEventListener('change', (e) => {
+    const v = Math.max(1, Math.min(40, parseInt(e.target.value,10)||7));
+    if (state.glyphs.length && v !== state.cols){
+      if (!confirm('Zmiana liczby kolumn przebuduje wszystkie znaki (dane spoza nowej szerokości zostaną obcięte). Kontynuować?')) {
+        e.target.value = state.cols; return;
+      }
+      const newBpg = v*2;
+      state.glyphs.forEach(g => {
+        const nb = new Array(newBpg).fill(0);
+        for (let i=0;i<Math.min(nb.length,g.bytes.length);i++) nb[i]=g.bytes[i];
+        g.bytes = nb;
+      });
+    }
+    state.cols = v;
+    renderAll();
+  });
+  $('cfgRows').addEventListener('change', (e) => {
+    state.rows = Math.max(1, Math.min(16, parseInt(e.target.value,10)||16));
+    $('rangeTo').max = state.rows-1;
+    renderAll();
+  });
+  $('cfgStart').addEventListener('change', (e) => {
+    state.startCode = parseInt(e.target.value,10)||32;
+    renderAll();
+  });
+  $('cfgZoom').addEventListener('change', (e) => {
+    state.zoom = Math.max(6, Math.min(40, parseInt(e.target.value,10)||20));
+    renderEditor();
+  });
+
+  $('infoLabel').addEventListener('input', (e) => {
+    if (state.selected < 0) return;
+    state.glyphs[state.selected].label = e.target.value;
+    renderHexBox();
+    renderCharMapLabelOnly();
+  });
+  function renderCharMapLabelOnly(){ renderCharMap(); }
+
+  $('cmpSelect').addEventListener('change', (e) => {
+    state.compare = parseInt(e.target.value,10);
+    renderEditor();
+    updateCmpInfo();
+  });
+  function updateCmpInfo(){
+    if (state.compare < 0 || state.selected < 0){ $('cmpInfo').textContent = 'Wybierz np. literę bazową ("c"), żeby wyrównać do niej akcent w "ć".'; return; }
+    const rf = clampRange();
+    const g = state.glyphs[state.selected], c = state.glyphs[state.compare];
+    const ig = rightmostInk(g.bytes, rf.from, rf.to);
+    const ic = rightmostInk(c.bytes, rf.from, rf.to);
+    $('cmpInfo').textContent = `Najbardziej wysunięta kolumna z pikselem (w zakresie wierszy ${rf.from}–${rf.to}): edytowany=${ig}, porównanie=${ic}. Różnica: ${ig-ic>0?'+':''}${ig-ic} kolumn.`;
+  }
+
+  $('rangeFrom').addEventListener('change', (e) => { state.rangeFrom = parseInt(e.target.value,10)||0; renderAll(); updateCmpInfo(); });
+  $('rangeTo').addEventListener('change', (e) => { state.rangeTo = parseInt(e.target.value,10)||15; renderAll(); updateCmpInfo(); });
+
+  $('nudgeUp').addEventListener('click', () => nudge(0,-1));
+  $('nudgeDown').addEventListener('click', () => nudge(0,1));
+  $('nudgeLeft').addEventListener('click', () => nudge(-1,0));
+  $('nudgeRight').addEventListener('click', () => nudge(1,0));
+  $('nudgeClear').addEventListener('click', clearRange);
+
+  $('btnClearGlyph').addEventListener('click', () => {
+    if (state.selected < 0) return;
+    const g = state.glyphs[state.selected];
+    g.bytes = g.bytes.map(()=>0);
+    renderAll();
+  });
+  $('btnCopyGlyph').addEventListener('click', () => {
+    if (state.selected < 0) return;
+    clipboard = state.glyphs[state.selected].bytes.slice();
+    setMsg('Skopiowano znak #' + state.selected + ' do schowka narzędzia.', 'ok');
+  });
+  $('btnPasteGlyph').addEventListener('click', () => {
+    if (state.selected < 0 || !clipboard) return;
+    const g = state.glyphs[state.selected];
+    g.bytes = clipboard.slice(0, g.bytes.length);
+    while (g.bytes.length < state.cols*2) g.bytes.push(0);
+    renderAll();
+  });
+
+  $('hexBox').addEventListener('change', (e) => {
+    if (state.selected < 0) return;
+    const tokens = e.target.value.match(/[0-9A-Fa-f]{2}/g);
+    if (!tokens){ setMsg('Nie rozpoznano bajtów szesnastkowych.', 'warn'); return; }
+    const bytes = tokens.map(t => parseInt(t,16)).slice(0, state.cols*2);
+    while (bytes.length < state.cols*2) bytes.push(0);
+    state.glyphs[state.selected].bytes = bytes;
+    renderAll();
+  });
+
+  function showEditor(){
+    $('emptyHint').style.display = 'none';
+    $('sidePanel').style.display = 'flex';
+    $('btnSave').disabled = false;
+    const wrap = $('editorWrap');
+    wrap.innerHTML = `
+      <div class="editor-toolbar">
+        <div style="font-family:var(--mono); font-size:12px; color:var(--muted);">
+          Kliknij / przeciągnij po siatce, aby zapalać i gasić piksele. Shift+klik na znaku w lewym panelu ustawia go jako odniesienie do porównania.
+        </div>
+      </div>
+      <div class="editor-canvas-area">
+        <div class="pixel-frame"><div id="editorGrid"></div></div>
+      </div>`;
+  }
+
+  function setMsg(text, cls){
+    const el = $('statMsg');
+    el.textContent = text;
+    el.className = cls || '';
+    clearTimeout(setMsg._t);
+    setMsg._t = setTimeout(()=>{ el.textContent=''; }, 5000);
+  }
+
+  // keep range fields synced with rows on load
+  $('rangeTo').value = 15;
+
+})();
+</script>
+</body>
+</html>
