@@ -2,9 +2,9 @@
 
 ## v0.16PL (09.08.2026)
 
-### Waterfall skanera pasma, plan pasm amatorskich oraz poprawki stabilności
+### Waterfall, plan pasm amatorskich oraz poprawki stabilności
 
-W tej wersji rozbudowano skaner pasma o waterfall czasowo-częstotliwościowy z planem pasm amatorskich, dodano tryb automatycznego zatrzymywania na wykrytym sygnale oraz naprawiono szereg błędów dotyczących Wi-Fi, audio i interfejsu ustawień.
+W tej wersji rozbudowano skaner pasma o waterfall, plan pasm amatorskich, dodano tryb automatycznego zatrzymywania na wykrytym sygnale oraz naprawiono szereg błędów dotyczących Wi-Fi, audio i interfejsu ustawień.
 
 ### Dodano
 
