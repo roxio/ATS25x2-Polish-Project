@@ -1,5 +1,47 @@
 # Historia zmian
 
+## v0.16PL (09.08.2026)
+
+### Waterfall skanera pasma, plan pasm amatorskich oraz poprawki stabilności
+
+W tej wersji rozbudowano skaner pasma o waterfall czasowo-częstotliwościowy z planem pasm amatorskich, dodano tryb automatycznego zatrzymywania na wykrytym sygnale oraz naprawiono szereg błędów dotyczących Wi-Fi, audio i interfejsu ustawień.
+
+### Dodano
+
+- **Waterfall w skanerze pasma**
+  - tryb łączony: górna połowa ekranu — kompaktowy wykres siły sygnału, dolna połowa — historia kolejnych przebiegów jako kolorowa mapa czasowo-częstotliwościowa,
+  - bufor 38 wierszy historii, aktualizacja co ok. 2 sekundy,
+  - **peak hold** — przygaszony ślad najsilniejszego dotychczas zarejestrowanego sygnału w każdym punkcie wykresu,
+  - **znacznik segmentów pasm amatorskich** (CW / cyfrowe / fonia) wg band planu IARU Region 1, dla pasm 160–10m,
+  - konfigurowalny próg wykrycia sygnału (dawniej na sztywno w kodzie),
+  - tryb **"stop na sygnale"** — automatyczne zamiatanie wstrzymuje się na kilka sekund po wykryciu sygnału powyżej progu, po czym samo wznawia skanowanie,
+  - włączane/wyłączane w ustawieniach.
+
+- **Nowe opcje konfiguracji**
+  - możliwość wyłączenia wygaszacza podczas skanowania pasma,
+  - zapis nowych ustawień w pamięci EEPROM.
+
+- **Diagnostyka pamięci**
+  - licznik wolnej pamięci RAM na ekranie testowym, pomocny przy wykrywaniu fragmentacji pamięci podczas długiej pracy urządzenia.
+
+### Zmieniono
+
+- `EEPROM.commit()` w autozapisie i zapisie banku pamięci wykonuje się teraz tylko wtedy, gdy dane faktycznie się zmieniły (dawniej zapisywał bezwarunkowo co 5 sekund, co przy ciągłej pracy skracało żywotność pamięci flash),
+- `WiFi.scanNetworks()` zwalnia teraz swój wewnętrzny bufor wyników po każdym skanowaniu sieci,
+- teksty informacyjne na ekranie skanera (granice pasma, częstotliwości, skala) rysowane z czarnym obrysem zamiast na nieprzezroczystym tle — nie zasłaniają już danych wykresu/waterfalla,
+- poprawiono układ i marginesy ekranu ustawień (mniejszy margines od krawędzi, większy obszar czyszczenia przy przełączaniu zakładek, poprawna kolejność rysowania dekoracji),
+- po każdym przełączeniu zakładki ustawień odświeżane są wszystkie przyciski, nie tylko wybrane.
+
+### Poprawiono
+
+- **status Wi-Fi w ustawieniach** błędnie pokazywał "brak zapisanej sieci" mimo prawidłowo zapisanej i działającej sieci,
+- **rejestrację pinu wyciszenia audio**, która była nieaktywna w kodzie, przez co wyciszanie (start urządzenia, skanowanie, squelch) nie miało żadnego efektu,
+- **pyknięcie w głośniku przy starcie urządzenia** — dodano ponowne wyciszenie po inicjalizacji chipu radiowego oraz płynne narastanie głośności od zera zamiast skoku na pełną wartość,
+- wyciek pamięci w wygaszaczu ekranu, powodujący psucie wyglądu przycisków po powrocie z wygaszacza,
+- przeliczanie pozycji dotyku na pozycję w menu ustawień (niezgodność z aktualnym układem wierszy).
+
+---
+
 ## v0.15PL (06.08.2026)
 
 ### Kalibracja akumulatora, wykres RSSI oraz kolejne usprawnienia interfejsu
