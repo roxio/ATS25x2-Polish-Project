@@ -270,10 +270,22 @@ float SCANstep;
 bool  SCANpause = true; // LWH - SCANpause must be initialized to a value else the squelch function will not work correctly.;
 float currentScanLine;
 int   ScanValueRSSI[320];
+int   ScanPeakRSSI[320]; 
+
+#define WF_ROWS 38
+uint8_t waterfallBuf[WF_ROWS][320];
+uint8_t waterfallHead = 0; 
+bool scanWaterfallOn = false;
+unsigned long lastWaterfallCommit = 0; 
+#define WF_COMMIT_MS 2000
+bool prevscanWaterfallOn;
 int   ScanValueSNR[320];
 bool  ScanMark[320];
 uint8_t ScanScaleLine[320];
-uint8_t ScanMarkSNR       = 3;
+uint8_t ScanMarkSNR       = 3; 
+bool    scanStopOnSignal  = false; 
+uint8_t scanStopSeconds   = 5; 
+unsigned long scanStopUntil = 0; 
 int   ScanBeginBand;
 int   ScanEndBand;
 uint8_t ScanAGC;
@@ -282,6 +294,29 @@ float deltaScanLine       = 0;
 float currentMinScanStep;
 float currentMaxScanStep;
 int   countScanSignal     = 3;
+
+struct HamSegment { uint16_t f1; uint16_t f2; uint8_t type; };
+const HamSegment hamBandPlan[] = {
+  {1810, 1838, 0}, {1838, 1843, 1}, {1843, 2000, 2},         // 160m
+  {3500, 3570, 0}, {3570, 3600, 1}, {3600, 3800, 2},         // 80m
+  {5351, 5367, 2},                                           // 60m (tylko USB w R1)
+  {7000, 7040, 0}, {7040, 7050, 1}, {7050, 7200, 2},         // 40m
+  {10100, 10150, 1},                                         // 30m (tylko CW/dane, bez fonii)
+  {14000, 14070, 0}, {14070, 14099, 1}, {14101, 14350, 2},   // 20m
+  {18068, 18095, 0}, {18095, 18109, 1}, {18111, 18168, 2},   // 17m
+  {21000, 21070, 0}, {21070, 21149, 1}, {21151, 21450, 2},   // 15m
+  {24890, 24915, 0}, {24915, 24929, 1}, {24931, 24990, 2},   // 12m
+  {28000, 28070, 0}, {28070, 28190, 1}, {28191, 29700, 2},   // 10m
+};
+const int hamBandPlanCount = sizeof(hamBandPlan) / sizeof(HamSegment);
+
+int8_t hamSegmentType(long freqKHz) { 
+  for (int i = 0; i < hamBandPlanCount; i++) {
+    if (freqKHz >= hamBandPlan[i].f1 and freqKHz < hamBandPlan[i].f2) return hamBandPlan[i].type;
+  }
+  return -1;
+}
+bool showHamSegments = true; 
 float signalScale;
 bool  prevScaleLine       = false;
 //===========================================
@@ -379,6 +414,9 @@ bool prevseekAccuracy;
 bool prevsaverDisableOnScan;							
 uint16_t prevbatMinV;
 uint16_t prevbatMaxV;
+uint8_t prevScanMarkSNR; 
+bool    prevscanStopOnSignal; 
+uint8_t prevscanStopSeconds; 
 bool prevwifiEnable;
 bool prevwifiConfigureNow;
 bool prevresetWifiConfig;
@@ -418,6 +456,19 @@ uint16_t nextBatMaxV(uint16_t current) {
 }
 String batVText(uint16_t centivolts) {
   return String(centivolts / 100) + "." + String(centivolts % 100 < 10 ? "0" : "") + String(centivolts % 100) + "V";
+}
+//===========================================
+const uint8_t scanSnrPresets[] = {1,2,3,4,5,6,8,10,12,15,20};
+const uint8_t scanSnrPresetsCount = sizeof(scanSnrPresets)/sizeof(scanSnrPresets[0]);
+uint8_t nextScanSnr(uint8_t current) {
+  for (uint8_t i=0;i<scanSnrPresetsCount;i++) if (current==scanSnrPresets[i]) return scanSnrPresets[(i+1)%scanSnrPresetsCount];
+  return scanSnrPresets[0];
+}
+const uint8_t scanStopSecPresets[] = {2,3,5,8,10,15,20,30};
+const uint8_t scanStopSecPresetsCount = sizeof(scanStopSecPresets)/sizeof(scanStopSecPresets[0]);
+uint8_t nextScanStopSec(uint8_t current) {
+  for (uint8_t i=0;i<scanStopSecPresetsCount;i++) if (current==scanStopSecPresets[i]) return scanStopSecPresets[(i+1)%scanStopSecPresetsCount];
+  return scanStopSecPresets[0];
 }
 //===========================================
 //SCREEN SAVER
@@ -787,6 +838,11 @@ struct StoreStruct {
   uint16_t batMinV; 
   uint16_t batMaxV;
   byte    chk8; 
+  uint8_t ScanMarkSNR; 
+  uint8_t scanStopOnSignal; 
+  uint8_t scanStopSeconds; 
+  uint8_t scanWaterfallOn; 
+  byte    chk9; 
 };
 
 StoreStruct storage = {
@@ -868,6 +924,11 @@ StoreStruct storage = {
   270,  // batMinV (2.70V) 
   405,  // batMaxV (4.05V) 
   '@',  // chk8 
+  3,    // ScanMarkSNR ZMIANA
+  0,    // scanStopOnSignal ZMIANA
+  5,    // scanStopSeconds ZMIANA
+  0,    // scanWaterfallOn ZMIANA
+  '@',  // chk9 ZMIANA
 };
 //MEMO BANK===============================================================
 #define offsetMemoEEPROM       352
@@ -1628,7 +1689,7 @@ if (wifiEnable) {
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
 
   Serial.println("ATS25X2 Polish Project");
-  Serial.println("Versja 0.15PL 06-08-2026");
+  Serial.println("Versja 0.16PL 09-08-2026");
 
   spr.createSprite(265, 120);
   spr.fillScreen(COLOR_BACKGROUND);
@@ -1638,9 +1699,9 @@ if (wifiEnable) {
   
   tft.println("ATS25X2 Polish Project");
   tft.setCursor(7, 33); //(7, 70);
-  tft.println(" Wersja 0.15PL");
+  tft.println(" Wersja 0.16PL");
   tft.setCursor(7, 56); //(7, 95);
-  tft.println(" 06-08-2026");
+  tft.println(" 09-08-2026");
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setCursor(7, 79); //(7, 120);
   tft.println(" RoX10 PL MOD");
@@ -1812,6 +1873,18 @@ if (wifiEnable) {
     storage.chk8   = '@';
     storage.batMinV = batMinV = 270;
     storage.batMaxV = batMaxV = 405;
+  }
+  if (storage.chk9 == '@') { 
+    ScanMarkSNR = storage.ScanMarkSNR;
+    scanStopOnSignal = storage.scanStopOnSignal;
+    scanStopSeconds = storage.scanStopSeconds;
+    scanWaterfallOn = storage.scanWaterfallOn;
+  } else {
+    storage.chk9 = '@';
+    storage.ScanMarkSNR = ScanMarkSNR = 3;
+    storage.scanStopOnSignal = scanStopOnSignal = 0;
+    storage.scanStopSeconds = scanStopSeconds = 5;
+    storage.scanWaterfallOn = scanWaterfallOn = 0;
   }
 // ===============================================
   OPTunpack();
@@ -2001,6 +2074,10 @@ void SaveInEeprom (void* arg)  {
     storage.wifiEnableAtBoot = wifiEnable; 
     storage.batMinV = batMinV; 
     storage.batMaxV = batMaxV; 
+    storage.ScanMarkSNR = ScanMarkSNR; 
+    storage.scanStopOnSignal = scanStopOnSignal; 
+    storage.scanStopSeconds = scanStopSeconds; 
+    storage.scanWaterfallOn = scanWaterfallOn; 
 
     bool eepromChanged = false;
     for (unsigned int t = 0; t < sizeof(storage); t++) {
@@ -2587,7 +2664,18 @@ void saver() {
         }
       }
     }
-    if (SCANbut and !SCANpause) DisplaySCAN();
+    if (SCANbut and !SCANpause) { 
+      if (scanStopUntil) {
+        if (millis() < scanStopUntil) {
+        } else {
+          scanStopUntil = 0;
+          si4735.setAudioMute(audioMuteOn); 
+          si4735.setFrequencyStep(1);
+        }
+      } else {
+        DisplaySCAN();
+      }
+    }
   }
 //activity  
   Saver = false;
@@ -3946,6 +4034,9 @@ void loop() {
             prevbatMinV = batMinV; 
             prevbatMaxV = batMaxV; 
             prevrssiHistoryOn = rssiHistoryOn; 
+            prevScanMarkSNR = ScanMarkSNR; 
+            prevscanStopOnSignal = scanStopOnSignal; 
+            prevscanWaterfallOn = scanWaterfallOn; 
             prevscreenV = screenV;
             prevdisplayPower = displayPower;
             prevRDSalways = RDSalways;
@@ -5828,6 +5919,7 @@ void showFirmwareInformation() {
 //=======================================================================================
 void pauseSCAN() {
   //=======================================================================================
+  scanStopUntil = 0; 
   int d = screenV * 40;
   if (SCANpause) {
     si4735.setAudioMute(audioMuteOff);
@@ -5873,6 +5965,52 @@ void drawSCAN() {
   DrawSCANind();
 }
 
+uint16_t heatColor565(uint8_t v) {
+  uint8_t r, g, b;
+  if (v < 64) {              // czarny -> granat
+    r = 0; g = 0; b = v;
+  } else if (v < 128) {      // granat -> cyjan/zielony
+    uint8_t f = v - 64;
+    r = 0; g = f * 2; b = 64 - f / 2;
+  } else if (v < 192) {      // zielony -> zolty
+    uint8_t f = v - 128;
+    r = f * 4; g = 128 + f / 2; b = 0;
+  } else {                   // zolty -> czerwony
+    uint8_t f = v - 192;
+    r = 255; g = 255 - f * 4; b = 0;
+  }
+  return tft.color565(r, g, b);
+}
+
+void commitWaterfallRow() {
+  waterfallHead = (waterfallHead + 1) % WF_ROWS;
+  for (int x = 0; x < 320; x++) {
+    int v = ScanValueSNR[x] * 6; // skalowanie SNR (dB) na 0-255
+    if (v < 0) v = 0; if (v > 255) v = 255;
+    waterfallBuf[waterfallHead][x] = (uint8_t) v;
+  }
+}
+
+void drawSCANwaterfall() {
+  int d = screenV * 40;
+  int width = 320 - (screenV * 80);
+  int top = scanSplitY(d) + 2, bottom = 198 + d; // dolna polowa, mala przerwa od wykresu powyzej
+  int rowH = 3;
+  int rows = (bottom - top) / rowH;
+  if (rows > WF_ROWS) rows = WF_ROWS;
+  static uint16_t rowBuf[320];
+  for (int r = 0; r < rows; r++) {
+    int bufIdx = (waterfallHead - r + WF_ROWS) % WF_ROWS;
+    for (int x = 0; x < width; x++) rowBuf[x] = heatColor565(waterfallBuf[bufIdx][x]);
+    int y = top + r * rowH;
+    for (int yy = 0; yy < rowH and (y + yy) < bottom; yy++) tft.pushImage(0, y + yy, width, 1, rowBuf);
+  }
+}
+
+int scanSplitY(int d40) {
+  return 81 + ((198 + d40) - 81) / 2;
+}
+
 //=======================================================================================
 void drawSCANgraf(bool erase) {
   //=======================================================================================
@@ -5881,16 +6019,81 @@ void drawSCANgraf(bool erase) {
     ScanEmpty = true;
     posScanFreq = currentScanFreq + int((deltaScanLine - 159 + d) * SCANstep);
     for (int i = 0; i < 320; i++) ScanMark[i] = false;
+    if (scanWaterfallOn) { 
+      for (int r = 0; r < WF_ROWS; r++) for (int x = 0; x < 320; x++) waterfallBuf[r][x] = 0;
+      waterfallHead = 0;
+      lastWaterfallCommit = millis();
+    }
   }
   ScanBeginBand = -1;
   ScanEndBand = 320 - d;
+  int d40 = screenV * 40; 
+  int splitY = scanSplitY(d40);
   for (int n = 0; n < (320 - d); n++) {
     if (erase) {
       ScanValueRSSI[n] = 198 + (d / 2);
+      ScanPeakRSSI[n] = 198 + (d / 2); 
       ScanValueSNR[n] = 0;
     }
     ScanScaleLine[n] = 0;
-    drawSCANline(n);
+    if (scanWaterfallOn) drawSCANlineCompact(n, d40, 81, splitY); 
+    else drawSCANline(n);
+  }
+  if (scanWaterfallOn) drawSCANwaterfall(); 
+}
+
+void drawSCANlineCompact(int n, int d, int graphTop, int graphBottom) {
+  updateScanBandEdges(n, d);
+  int fullBottom = 198 + d;
+  int fullTop = 81;
+  int hFull = fullBottom - fullTop;
+  int hHalf = graphBottom - graphTop;
+
+  if (n == int(currentScanLine)) {
+    tft.drawLine(n, graphTop, n, graphBottom, TFT_RED);
+    DisplaySCANsignal();
+    return;
+  }
+
+  int16_t colf = TFT_NAVY;
+  if (ScanValueSNR[n] > 0) {
+    colf = TFT_NAVY + 0x8000;
+    if (ScanValueSNR[n] < 16) colf += (ScanValueSNR[n] * 2048);
+    else { colf = 0xF810; if (ScanValueSNR[n] < 24) colf += ((ScanValueSNR[n] - 16) * 258); else colf = 0xFF1E; }
+  }
+  long frq = currentScanFreq + ((n - 159 + d + deltaScanLine) * SCANstep);
+  if (frq > band[bandIdx].maximumFreq or frq < band[bandIdx].minimumFreq) colf = TFT_GREY;
+
+  int rawV = ScanValueRSSI[n];
+  if (rawV < fullTop) rawV = fullTop;
+  int y = graphTop + (long)(rawV - fullTop) * hHalf / hFull; 
+  tft.drawLine(n, y + 1, n, graphBottom, colf);
+  tft.drawLine(n, graphTop, n, y - 1, TFT_BLACK);
+  tft.drawPixel(n, y, TFT_SILVER);
+
+  int rawP = ScanPeakRSSI[n];
+  if (rawP < fullBottom and rawP < rawV - 1) {
+    int py = graphTop + (long)(rawP - fullTop) * hHalf / hFull;
+    tft.drawPixel(n, py, TFT_DARKGREY);
+  }
+
+  if (ScanMark[n]) tftTransRect(n, graphBottom - 6, 1, 5, TFT_YELLOW);
+
+  if (showHamSegments) {
+    int8_t seg = hamSegmentType(frq);
+    if (seg == 0) tft.drawPixel(n, graphTop, TFT_CYAN);
+    else if (seg == 1) tft.drawPixel(n, graphTop, TFT_MAGENTA);
+    else if (seg == 2) tft.drawPixel(n, graphTop, TFT_GREEN);
+  }
+}
+
+void updateScanBandEdges(int n, int d) {
+  long frqCheck = currentScanFreq + ((n - 159 + d + deltaScanLine) * SCANstep);
+  if (frqCheck > band[bandIdx].maximumFreq) {
+    if (ScanEndBand == (320 - (d * 2))) ScanEndBand = n;
+  }
+  if (frqCheck < band[bandIdx].minimumFreq) {
+    if (ScanBeginBand < n) ScanBeginBand = n;
   }
 }
 
@@ -5937,13 +6140,12 @@ void drawSCANline(int n) {
     }
 
 //overflow BAND
+    updateScanBandEdges(n, d); 
     if ((currentScanFreq + ((n - 159 + d + deltaScanLine) * SCANstep)) > band[bandIdx].maximumFreq) {
       colf = TFT_GREY;
-      if (ScanEndBand == (320 - (d * 2))) ScanEndBand = n;
     }
     if ((currentScanFreq + ((n - 159 + d + deltaScanLine) * SCANstep)) < band[bandIdx].minimumFreq) {
       colf = TFT_GREY;
-      if (ScanBeginBand < n) ScanBeginBand = n;
     }
 
 //RSSI background
@@ -5951,6 +6153,11 @@ void drawSCANline(int n) {
     if (tmpValue < 82) tmpValue = 82;
     tft.drawLine(n, tmpValue + 1, n, 198 + d, colf);
     tft.drawLine(n, 81, n, tmpValue - 1, colb);
+
+//Peak hold
+    if (ScanPeakRSSI[n] < (198 + d) and ScanPeakRSSI[n] < tmpValue - 1) {
+      tft.drawPixel(n, ScanPeakRSSI[n], TFT_DARKGREY);
+    }
 
 //scale line half
     if (!ScanScaleLine[n]) {
@@ -5995,6 +6202,14 @@ void drawSCANline(int n) {
 
 //Mark for SNR activity
   if (ScanMark[n]) tftTransRect(n, 95, 1, 5, TFT_YELLOW);
+
+//Segment pasma amatorskiego (CW/cyfrowe/fonia)
+  if (showHamSegments) {
+    int8_t seg = hamSegmentType(frq);
+    if (seg == 0) tft.drawLine(n, 81, n, 83, TFT_CYAN);        // CW
+    else if (seg == 1) tft.drawLine(n, 81, n, 83, TFT_MAGENTA); // cyfrowe/waskopasmowe
+    else if (seg == 2) tft.drawLine(n, 81, n, 83, TFT_GREEN);   // fonia SSB
+  }
 }
 
 //=======================================================================================
@@ -6021,15 +6236,34 @@ void DisplaySCAN() {
     posScan = ScanBeginBand +1;
     setf = true;
   }
+  if (scanWaterfallOn and !Saver) { 
+    if (millis() - lastWaterfallCommit > WF_COMMIT_MS) {
+      lastWaterfallCommit = millis();
+      commitWaterfallRow();
+      drawSCANwaterfall();
+      DrawSCANtxt(true); 
+    }
+  }
   if (setf) {
     setFreq(currentScanFreq + int((deltaScanLine - 159 + d + posScan) * SCANstep));
   } else {
     if (posScan == posScanLast) ScanValueRSSI[posScan] = (ScanValueRSSI[posScan] + getSignal(true)) / 2; else ScanValueRSSI[posScan] = getSignal(true);
+    if (ScanValueRSSI[posScan] < ScanPeakRSSI[posScan]) ScanPeakRSSI[posScan] = ScanValueRSSI[posScan]; 
     if (posScan == posScanLast) ScanValueSNR[posScan] = (ScanValueSNR[posScan] + getSignal(false)) / 2; else ScanValueSNR[posScan] = getSignal(false);
     if (ScanValueSNR[posScan] >= ScanMarkSNR and posScan > ScanBeginBand and posScan < ScanEndBand) ScanMark[posScan] = true;
-    if (!Saver) {
-      drawSCANline(posScan);
-      DrawSCANtxt(false);
+    if (!Saver) { 
+      if (scanWaterfallOn) drawSCANlineCompact(posScan, d, 81, scanSplitY(d));
+      else drawSCANline(posScan);
+      DrawSCANtxt(false); 
+    }
+    if (scanStopOnSignal and !scanStopUntil and ScanValueSNR[posScan] >= ScanMarkSNR and posScan > ScanBeginBand and posScan < ScanEndBand) {
+      si4735.setAudioMute(audioMuteOff);
+      posScanFreq = currentScanFreq + int((deltaScanLine - 159 + d + posScan) * SCANstep);
+      setFreq(posScanFreq);
+      AGCgain = ScanAGC; 
+      checkAGC();
+      scanStopUntil = millis() + ((unsigned long)scanStopSeconds * 1000UL);
+      return; 
     }
     if (SCANstep < 1) {
       for (int i = 1; i < 1 / SCANstep; i++) {
@@ -6043,10 +6277,12 @@ void DisplaySCAN() {
             ScanValueRSSI[posScan] = ScanValueRSSI[posScan - 1];
             ScanValueSNR[posScan] = ScanValueSNR[posScan - 1];
           }
+          if (ScanValueRSSI[posScan] < ScanPeakRSSI[posScan]) ScanPeakRSSI[posScan] = ScanValueRSSI[posScan]; 
           if (ScanValueSNR[posScan] >= ScanMarkSNR) ScanMark[posScan] = true;
-          if (!Saver) {
-            drawSCANline(posScan);
-            DrawSCANtxt(false);
+          if (!Saver) { 
+            if (scanWaterfallOn) drawSCANlineCompact(posScan, d, 81, scanSplitY(d));
+            else drawSCANline(posScan);
+            DrawSCANtxt(false); 
           }
         }
       }
@@ -6086,50 +6322,55 @@ void freqUp() {
   if (currentMode == LSB or currentMode == USB or currentMode == CW) si4735.setAutomaticGainControl(1, 0);     //AGC disabled
 }
 
+void drawOutlinedString(String text, int x, int y, uint16_t color) {
+  tft.setTextColor(TFT_BLACK); // bez drugiego argumentu = przezroczyste tlo
+  tft.drawString(text, x - 1, y - 1);
+  tft.drawString(text, x + 1, y - 1);
+  tft.drawString(text, x - 1, y + 1);
+  tft.drawString(text, x + 1, y + 1);
+  tft.drawString(text, x, y - 1);
+  tft.drawString(text, x, y + 1);
+  tft.drawString(text, x - 1, y);
+  tft.drawString(text, x + 1, y);
+  tft.setTextColor(color);
+  tft.drawString(text, x, y);
+}
+
 //=======================================================================================
 void DrawSCANtxt(bool all) {
   //=======================================================================================
   int d = screenV * 80;
   tft.setTextSize(1);
-  tft.setTextColor(TFT_SILVER, TFT_BLACK);
   if ((ScanEndBand < (315 - d)) and ((posScan > (ScanEndBand + 5)) and (posScan < (ScanEndBand + 45))) or all) {
-    tft.fillRect(ScanEndBand + 3, 110, 40, 32, TFT_BLACK);
     tft.setTextDatum(BL_DATUM);
-    tft.drawString("END OF", ScanEndBand + 5, 120);
-    tft.drawString("BAND", ScanEndBand + 5, 130);
-    tft.drawString(band[bandIdx].bandName, ScanEndBand + 5, 140);
+    drawOutlinedString("END OF", ScanEndBand + 5, 120, TFT_SILVER);
+    drawOutlinedString("BAND", ScanEndBand + 5, 130, TFT_SILVER);
+    drawOutlinedString(band[bandIdx].bandName, ScanEndBand + 5, 140, TFT_SILVER);
   }
   if ((ScanBeginBand > 5) and ((posScan > (ScanBeginBand - 43)) and (posScan < (ScanBeginBand - 3))) or all) {
-    tft.fillRect(ScanBeginBand - 43, 110, 40, 32, TFT_BLACK);
     tft.setTextDatum(BR_DATUM);
-    tft.drawString("BEGIN", ScanBeginBand - 5, 120);
-    tft.drawString("BAND", ScanBeginBand - 5, 130);
-    tft.drawString(band[bandIdx].bandName, ScanBeginBand - 5, 140);
+    drawOutlinedString("BEGIN", ScanBeginBand - 5, 120, TFT_SILVER);
+    drawOutlinedString("BAND", ScanBeginBand - 5, 130, TFT_SILVER);
+    drawOutlinedString(band[bandIdx].bandName, ScanBeginBand - 5, 140, TFT_SILVER);
   }
   if (posScan < 60 or all) {
     //start freq
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextDatum(BL_DATUM);
-    if (currentMode == FM) tft.drawString(String((currentScanFreq + (SCANstep * (deltaScanLine - 159 + (d / 2)))) / 100) + " MHz ", 0, 90); else tft.drawString(String(int(currentScanFreq + (SCANstep * (deltaScanLine - 159 + (d / 2))))) + " KHz ", 0, 90);
+    if (currentMode == FM) drawOutlinedString(String((currentScanFreq + (SCANstep * (deltaScanLine - 159 + (d / 2)))) / 100) + " MHz ", 0, 90, TFT_GREEN); else drawOutlinedString(String(int(currentScanFreq + (SCANstep * (deltaScanLine - 159 + (d / 2))))) + " KHz ", 0, 90, TFT_GREEN);
     //scale
-    tft.fillRect(0, 181 + (d / 2), 47, 17, TFT_BLACK);
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    if (currentMode == FM and SCANstep > 4) tft.drawString("10 MHz", 0, 195 + (d / 2));
-    if ((currentMode == FM and SCANstep == 4) or (currentMode != FM and SCANstep > 4)) tft.drawString("1 MHz", 0, 195 + (d / 2));
-    if (currentMode == FM and SCANstep == 2) tft.drawString("500 KHz", 0, 195 + (d / 2));
-    if ((currentMode == FM and SCANstep < 2) or (currentMode != FM and SCANstep == 4)) tft.drawString("100 KHz", 0, 195 + (d / 2));
-    if (currentMode != FM and SCANstep == 2) tft.drawString("50 KHz", 0, 195 + (d / 2));
-    if (currentMode != FM and SCANstep < 2) tft.drawString("10 KHz", 0, 195 + (d / 2));
+    if (currentMode == FM and SCANstep > 4) drawOutlinedString("10 MHz", 0, 195 + (d / 2), TFT_YELLOW);
+    if ((currentMode == FM and SCANstep == 4) or (currentMode != FM and SCANstep > 4)) drawOutlinedString("1 MHz", 0, 195 + (d / 2), TFT_YELLOW);
+    if (currentMode == FM and SCANstep == 2) drawOutlinedString("500 KHz", 0, 195 + (d / 2), TFT_YELLOW);
+    if ((currentMode == FM and SCANstep < 2) or (currentMode != FM and SCANstep == 4)) drawOutlinedString("100 KHz", 0, 195 + (d / 2), TFT_YELLOW);
+    if (currentMode != FM and SCANstep == 2) drawOutlinedString("50 KHz", 0, 195 + (d / 2), TFT_YELLOW);
+    if (currentMode != FM and SCANstep < 2) drawOutlinedString("10 KHz", 0, 195 + (d / 2), TFT_YELLOW);
   }
   if (posScan > (240 - d) or all) {  
     //end freq
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextDatum(BR_DATUM);
-    if (currentMode == FM) tft.drawString(" " + String((currentScanFreq + (SCANstep * (160 - (d / 2) + deltaScanLine))) / 100) + " MHz", 319 - d, 90); else tft.drawString(" " + String(int(currentScanFreq + (SCANstep * (160 - (d / 2) + deltaScanLine)))) + " KHz", 319 - d, 90);
+    if (currentMode == FM) drawOutlinedString(" " + String((currentScanFreq + (SCANstep * (160 - (d / 2) + deltaScanLine))) / 100) + " MHz", 319 - d, 90, TFT_GREEN); else drawOutlinedString(" " + String(int(currentScanFreq + (SCANstep * (160 - (d / 2) + deltaScanLine)))) + " KHz", 319 - d, 90, TFT_GREEN);
     //scale
-    tft.fillRect(296 - d, 181 + (d / 2), 23, 17, TFT_BLACK);
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    if (SCANstep >= 1) tft.drawString("1:" + String(int(SCANstep)), 319 - d, 195 + (d / 2)); else tft.drawString("x" + String(int(1 / SCANstep)), 319 - d, 195 + (d / 2));
+    if (SCANstep >= 1) drawOutlinedString("1:" + String(int(SCANstep)), 319 - d, 195 + (d / 2), TFT_YELLOW); else drawOutlinedString("x" + String(int(1 / SCANstep)), 319 - d, 195 + (d / 2), TFT_YELLOW);
   }
 }
     
@@ -6616,6 +6857,8 @@ void displSETUP() {
       displSETUPitem     ("FM od 64 MHz      ", 20,  prevVHFon, (VHFon != prevVHFon));
       displSETUPitem     ("Szukaj w AM 1 KHz ", 52,  prevseekAccuracy, (seekAccuracy != prevseekAccuracy));
       displSETUPitem     ("Wykres trendu RSSI", 84,  prevrssiHistoryOn, (rssiHistoryOn != prevrssiHistoryOn)); 
+      displSETUPitemValue("Prog wykrycia SNR ", 116, String(prevScanMarkSNR) + " dB", (ScanMarkSNR != prevScanMarkSNR)); 
+      displSETUPitem     ("Stop na sygnale   ", 148, prevscanStopOnSignal, (scanStopOnSignal != prevscanStopOnSignal)); 
       break;
     case 1:
       tftPlPrint("USTAWIENIA - UŻYTKOWE    ", 2 , 18);
@@ -6630,6 +6873,7 @@ void displSETUP() {
       displSETUPitem     ("Podświetlenie     ", 52,  prevdisplayOff, (displayOff != prevdisplayOff));
       displSETUPitemValue("Czas do wygaszacza", 84, saverTimeText(prevsaverTime), (saverTime != prevsaverTime));
       displSETUPitem     ("Orientacja pionowa", 116, prevscreenV, (screenV != prevscreenV));
+      displSETUPitem     ("Waterfall w SCAN  ", 148, prevscanWaterfallOn, (scanWaterfallOn != prevscanWaterfallOn)); 
       break;
     case 3:
       tftPlPrint("USTAWIENIA - SKANOWANIE  ", 2 , 18);
@@ -6760,6 +7004,9 @@ void defaultSETUP() {
     prevbatMinV = 270; 
     prevbatMaxV = 405; 	
     prevrssiHistoryOn = false; 
+    prevScanMarkSNR = 3; 
+    prevscanStopOnSignal = false; 
+    prevscanWaterfallOn = false; 
 
     prevbatShow = false;
     prevbeeperOn = true;
@@ -6792,6 +7039,12 @@ void changeSETUP(int pos) {
         case 2:
           prevrssiHistoryOn = !prevrssiHistoryOn; 
           break;
+        case 3:
+          prevScanMarkSNR = nextScanSnr(prevScanMarkSNR); 
+          break;
+        case 4:
+          prevscanStopOnSignal = !prevscanStopOnSignal; 
+          break;
       }
       break;
     case 1:
@@ -6823,6 +7076,9 @@ void changeSETUP(int pos) {
           break;
         case 3:
           prevscreenV = !prevscreenV;
+          break;
+        case 4:
+          prevscanWaterfallOn = !prevscanWaterfallOn; 
           break;
       }
       break;
@@ -6908,6 +7164,7 @@ void saveSETUP() {
       seekAccuracy != prevseekAccuracy or wifiEnable != prevwifiEnable or wifiConfigureNow != prevwifiConfigureNow or
 	  saverDisableOnScan != prevsaverDisableOnScan or											 
       batMinV != prevbatMinV or batMaxV != prevbatMaxV or rssiHistoryOn != prevrssiHistoryOn or
+      ScanMarkSNR != prevScanMarkSNR or scanStopOnSignal != prevscanStopOnSignal or scanWaterfallOn != prevscanWaterfallOn or
       resetWifiConfig != prevresetWifiConfig) { 
     int n = confirm("ZAPISAĆ ZMIANY?");
     if (n == 1) {
@@ -6946,6 +7203,9 @@ void saveSETUP() {
       batMinV = prevbatMinV; 
       batMaxV = prevbatMaxV; 
       rssiHistoryOn = prevrssiHistoryOn; 
+      ScanMarkSNR = prevScanMarkSNR; 
+      scanStopOnSignal = prevscanStopOnSignal; 
+      scanWaterfallOn = prevscanWaterfallOn; 
       displayPower = prevdisplayPower;
       RDSalways = prevRDSalways;
       seekAccuracy = prevseekAccuracy;
