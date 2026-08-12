@@ -1,5 +1,5 @@
 # Historia zmian
-## [0.17PL] - 2026-08-12
+## 0.17PL (2026-08-12)
 
 ### Dodano — sterowanie i ergonomia urządzenia
 - **Blokada ekranu i enkodera (LOCK)** — przytrzymanie lewej części wyświetlacza częstotliwości (~600ms) blokuje/odblokowuje dotyk i obrót enkodera. Wskaźnik "LOCK" w lewym dolnym rogu.
