@@ -1,4 +1,58 @@
 # Historia zmian
+## [0.17PL] - 2026-08-12
+
+### Dodano — sterowanie i ergonomia urządzenia
+- **Blokada ekranu i enkodera (LOCK)** — przytrzymanie lewej części wyświetlacza częstotliwości (~600ms) blokuje/odblokowuje dotyk i obrót enkodera. Wskaźnik "LOCK" w lewym dolnym rogu.
+- **Dwa VFO (A/B)** — przytrzymanie prawej części wyświetlacza częstotliwości przełącza między dwoma niezależnie zapamiętanymi zestawami pasmo/tryb/częstotliwość/krok/BFO.
+- **Kanał priorytetowy** — krótki dotyk obszaru S-metra zapisuje bieżącą częstotliwość jako priorytet i włącza monitorowanie; długie przytrzymanie włącza/wyłącza. Automatyczne, cykliczne sprawdzanie priorytetu podczas normalnego słuchania, z powrotem po ciszy.
+- **Historia ostatnich częstotliwości** — krótkie stuknięcie lewej części wyświetlacza (gdy odblokowany) otwiera listę do 10 ostatnio używanych, stabilnych częstotliwości.
+- **Stoper nasłuchu/QSO** — start/stop/reset gestem dotykowym, wyświetlany na głównym ekranie.
+- **Szybka zmiana kroku strojenia** — dotknięcie środkowej części wyświetlacza (poza trybem SSB/CW) cyklicznie zmienia krok strojenia bez wchodzenia w menu.
+- **Tryb "Close Call"** — po zakończeniu przebiegu skanowania automatyczny skok na najsilniejszy punkt zarejestrowany przez Peak Hold (ustawienie dostępne przez panel WWW).
+- **Ponowna kalibracja ekranu dotykowego** — nowy przycisk w USTAWIENIA → TEST, wykorzystuje wbudowaną w TFT_eSPI procedurę `calibrateTouch()`, wynik zapisywany trwale do EEPROM.
+- **Ekran informacji o firmware SI4735** — przywrócony i podłączony pod przycisk "FW INFO" w USTAWIENIA → TEST (numer części, wersje firmware/komponentów, chip revision).
+
+### Dodano — S-metr i wskaźniki
+- **Etykieta S-punktu** (np. "S7", "S9+20") na klasycznym pasku S-metra, oparta na precyzyjnych progach dBuV.
+- **Analogowy S-metr z wychylającą się wskazówką** jako alternatywny widok.
+- **Peak Hold na głównym S-metrze** — biała kreska pokazująca niedawny szczyt sygnału, powoli opadająca.
+- **Wielofunkcyjny meter** — cykliczne przełączanie trybu wyświetlania (pasek klasyczny / trend RSSI / analogowa wskazówka).
+
+### Dodano — tryb nocny i wygląd
+- **Automatyczny tryb nocny** — przyciemnianie podświetlenia w oknie 22:00–6:00 na podstawie NTP, z pełnym przywracaniem jasności.
+- **Animacja rozjaśniania logo startowego** (fade-in) zamiast twardego pojawienia się.
+- **Logo pełnej szerokości ekranu** — proporcjonalnie skalowane (265×120 → 320×144) zarówno na ekranie startowym, jak i ekranie informacji o wersji.
+- Dodano stałe wyrównania tekstu do górnej krawędzi: `TL_T`, `TC_T`, `TR_T` (obok istniejących `BL_T`, `BC_T`, `BR_T`) w silniku renderowania tekstu.
+
+### Dodano — panel sterowania WWW (całkowicie nowa funkcjonalność)
+- **Pełny serwer WWW** oparty o `WebServer.h`, z panelem sterowania w stylu profesjonalnego transceivera (Yaesu), dostępnym pod adresem IP urządzenia lub `http://ats25x2.local` (mDNS).
+- **Serwer WWW domyślnie włączony** — po udanym połączeniu WiFi urządzenie nie usypia go automatycznie, tylko od razu udostępnia panel.
+- Sterowanie: częstotliwość, pasmo, tryb, głośność, wyciszenie, AGC/tłumik, VFO A/B, kanał priorytetowy, stoper, blokada ekranu.
+- Podgląd na żywo: metry SIGNAL/SNR, RDS (nazwa stacji + tekst, stabilizowane "lepkie" pola), status skanera.
+- **Sterowanie skanowaniem** (pauza/wznów, gdy skaner aktywny na urządzeniu).
+- **Lista wykluczeń skanowania (skip list)** — dodawanie/usuwanie przez WWW, eksport/import `.txt`.
+- **Log Discovery** — zapis czasu/częstotliwości/SNR przy każdym zatrzymaniu skanera, eksport `.txt`.
+- **Pamięć stacji**: wyszukiwarka, sortowanie (nazwa/częstotliwość/pasmo), grupowanie wg pasma, ulubione (⭐), masowy import z pliku `.txt`.
+- **Eksport/import pełnej konfiguracji urządzenia** jako plik `.txt` (bit-w-bit kopia struktury konfiguracyjnej).
+- **Menu opcji** — 14 najczęściej używanych ustawień jako przełączniki, zmiany trwale zapisywane do EEPROM.
+- **Tryb kompaktowy** interfejsu WWW (mniejsze elementy, więcej informacji na raz), zapamiętywany w przeglądarce.
+
+### Naprawiono
+- **Trzask przy zmianie pasma/trybu w trakcie pracy** — `BandSet()` (wspólny punkt dla wszystkich ścieżek zmiany pasma/trybu) owinięty wyciszeniem audio na czas przestrajania, analogicznie do wcześniejszej poprawki trzasku przy starcie urządzenia.
+- **Kolory logo startowego** — poprawiona precyzja zaokrąglania jasności (RGB565) oraz kolejność bajtów przy przyciemnianiu, eliminująca przekłamania kolorów.
+- Poprawiono niekompletne/mylące komunikaty instruktażowe na ekranie startowym (reset ustawień, obrót ekranu).
+
+### Usunięto (martwy kod)
+- `pushDimmedImage()` — zastąpiona przez `pushScaledDimmedImage()`.
+- `isAPActive()` — nieużywany helper.
+
+### Zmieniono — struktura EEPROM
+- Rozszerzona struktura konfiguracji o pole `touchCalData[5]` (trwała kalibracja dotyku) i znacznik wersji `chk11`.
+- `offsetMemoEEPROM` przesunięty z 352 na 360 (dokładnie zmierzony przyrost rozmiaru struktury: 320→328 bajtów).
+
+---
+
+**Uwaga migracyjna:** urządzenia aktualizowane z wersji ≤0.16PL automatycznie zainicjują nowe pola konfiguracyjne wartościami domyślnymi przy pierwszym uruchomieniu nowego firmware (mechanizm `chk11`). Bank pamięci stacji pozostaje kompatybilny.
 
 ## v0.16PL (09.08.2026)
 
