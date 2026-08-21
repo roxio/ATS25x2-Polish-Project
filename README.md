@@ -2,8 +2,8 @@
 
 **SI4735 2.8" TFT WiFi — Wersja Polska**
 
-Wersja firmware: **0.18PL**
-Data wydania: 19 sierpnia 2026
+Wersja firmware: **0.2PL**
+Data wydania: 21 sierpnia 2026
 Projekt: ATS25X2 Polish Project (RoX10 PL MOD)
 
 ---
