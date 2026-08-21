@@ -17,9 +17,10 @@
 class Rotary
 {
   public:
-    Rotary(char, char);
-    // Process pin(s)
-    unsigned char process();
+    Rotary(uint8_t, uint8_t);
+    // Process pin(s) - wywolywane z ISR, dlatego IRAM_ATTR (bezpieczne przy
+    // rownoczesnych operacjach na flash - OTA, EEPROM, serwer WWW)
+    unsigned char IRAM_ATTR process();
   private:
     unsigned char state;
     unsigned char pin1;

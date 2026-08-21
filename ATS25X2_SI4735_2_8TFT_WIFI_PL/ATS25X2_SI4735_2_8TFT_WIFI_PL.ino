@@ -3,6 +3,8 @@
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <WiFiManager.h>
+#include <ArduinoOTA.h>
+#include "esp_wifi.h"
 #include "time.h"
 struct KbdKeyDef;
 
@@ -40,8 +42,11 @@ uint16_t calDataH[5] = { 387, 3530, 246, 3555, 7 };
 
 #define IhaveCrystal
 
+#define FW_VERSION_STR "0.20PL"
+
 #include "Tahoma_10x12_pl.h"
 #include "Tahoma_15x16_pl.h"
+#include "Tahoma_20x24_pl.h"
 
 #define TFT_TRANS   -1
 
@@ -63,6 +68,22 @@ uint16_t calDataH[5] = { 387, 3530, 246, 3555, 7 };
 
 #define T1012_T    0
 #define T1516_T    1
+#define T2024_T    2
+
+struct PlFontDef {
+  const uint8_t* data;
+  uint8_t cols;
+  uint8_t height;
+  uint8_t baseWidth;
+  uint8_t cursiveOffset;
+};
+
+const PlFontDef plFonts[] = {
+  { Tahoma10x12,  7, 12,  8, 2 },
+  { Tahoma15x16, 11, 16, 13, 3 },
+  { Tahoma20x24, 18, 24, 18, 4 },
+};
+const uint8_t plFontCount = sizeof(plFonts) / sizeof(plFonts[0]);
 
 float tftPlSize          = 1;
 uint16_t tftPlColor      = 0xFFFF;
@@ -207,6 +228,20 @@ const uint16_t size_content = sizeof ssb_patch_content;
 
 bool bfoTr          = false;
 bool bfoOn          = false;
+bool cwUpperSideband = true;
+#define CW_PITCH_HZ 700
+bool ecssOn = false;
+int calUSB = 0;
+int calLSB = 0;
+bool deEmphasisEurope = true;
+uint8_t rdsPTY = 0;
+uint16_t rdsPI = 0;
+const char* rdsPtyNames[32] = {
+  "Brak", "Wiadomosci", "Sprawy biezace", "Informacje", "Sport", "Edukacja", "Dramat", "Kultura",
+  "Nauka", "Rozne", "Pop", "Rock", "Muzyka latwa", "Muzyka lekka", "Muzyka powazna", "Inna muzyka",
+  "Pogoda", "Finanse", "Dzieciece", "Spoleczne", "Religia", "Rozmowy", "Podroze", "Wypoczynek",
+  "Jazz", "Country", "Muzyka narodowa", "Oldies", "Folk", "Dokument", "Alarm testowy", "Alarm"
+};
 bool ssbLoaded      = false;
 bool FirstLayer     = true;
 bool FirstTime      = true;
@@ -234,6 +269,8 @@ bool SQUELCHbut = false;
 long SQUELCHbutOnTime       = millis();
 int previousSquelch;
 int currentSquelch;
+int squelchByMode[5] = {-1, -1, -1, -1, -1};
+uint8_t lastSquelchMode = 255;
 int SignalQuality = 0;
 long squelchDecay            = 0;
 #define squelchDecayTime     500
@@ -244,7 +281,17 @@ uint8_t MinSQUELCH             =  0;
 uint8_t encoderBtnState        =  0;
 #define MIN_ELAPSED_SQUELCHbut_TIME     1000
 
+bool  squelchAdaptiveOn = false;
+int   squelchNoiseFloor = 0;
+float squelchNoiseFloorF = 0;
+bool  squelchNoiseFloorInit = false;
+unsigned long squelchAdaptElapsed = 0;
+#define squelchAdaptInterval  200
+#define squelchAdaptMargin    6
+#define squelchAdaptAlpha     0.08
+
 bool batVolt        = true;
+bool prevbatVolt;
 long elapsedBat     = 0;
 
 bool  SCANbut             = false;
@@ -255,8 +302,10 @@ int   posScanLast;
 float SCANstep;
 bool  SCANpause = true;
 float currentScanLine;
-int   ScanValueRSSI[320];
-int   ScanPeakRSSI[320];
+int16_t ScanValueRSSI[320];
+int16_t ScanPeakRSSI[320];
+
+#define SCAN_PEAK_WINDOW 4
 
 #define WF_ROWS 38
 uint8_t waterfallBuf[WF_ROWS][320];
@@ -268,7 +317,7 @@ bool prevscanWaterfallOn;
 bool prevcwDecoderOn;
 bool prevwebServerOn;
 bool prevanalogMeterOn;
-int   ScanValueSNR[320];
+int16_t ScanValueSNR[320];
 bool  ScanMark[320];
 uint8_t ScanScaleLine[320];
 uint8_t ScanMarkSNR       = 3;
@@ -324,6 +373,7 @@ bool  MEMObut             = false;
 int   currentMemo         = 0;
 bool  MEMOadd             = false;
 bool  MEMOdel             = false;
+bool  memoConfirmOverwrite = false;
 char  addMemoName[21];
 uint16_t addMemoFreq;
 uint8_t addMemoBand;
@@ -335,7 +385,7 @@ bool  presetBank          = false;
 
 bool    SETUPbut          = false;
 int     pageSetup         = 0;
-uint8_t maxPageSetup      = 7;
+uint8_t maxPageSetup      = 8;
 
 bool      PREtap          = false;
 bool      PRE             = false;
@@ -375,6 +425,8 @@ uint16_t batMaxV = 405;
 bool wifiEnable          = true;
 bool wifiConfigureNow    = false;
 bool resetWifiConfig     = false;
+#define THEME_COUNT 5
+uint8_t themeIdx        = 0;
 
 bool prevdigitLigth;
 bool prevlangRetroEN;
@@ -401,10 +453,13 @@ uint16_t prevbatMaxV;
 uint8_t prevScanMarkSNR;
 bool    prevscanStopOnSignal;
 uint8_t prevscanStopSeconds;
+bool    prevcloseCallOn;
 bool prevwifiEnable;
 bool prevwifiConfigureNow;
 bool prevresetWifiConfig;
 bool prevnightModeOn;
+uint8_t prevthemeIdx;
+bool prevsquelchAdaptiveOn;
 
 const uint16_t saverTimePresets[] = {30, 60, 90, 120, 180, 300, 600, 900, 1200, 1800};
 const uint8_t saverTimePresetsCount = sizeof(saverTimePresets) / sizeof(saverTimePresets[0]);
@@ -443,19 +498,25 @@ String batVText(uint16_t centivolts) {
   return String(centivolts / 100) + "." + String(centivolts % 100 < 10 ? "0" : "") + String(centivolts % 100) + "V";
 }
 
+uint8_t nextScanStopSeconds(uint8_t current) {
+  return (current % 10) + 1;
+}
+
+uint8_t nextThemeIdx(uint8_t current) {
+  return (current + 1) % THEME_COUNT;
+}
+String themeName(uint8_t idx) {
+  const char* names[] = {"CIEMNY", "KREMOWY", "NIEBIESKI", "ZIELONY", "BURSZTYN"};
+  if (idx >= THEME_COUNT) return "?";
+  return String(names[idx]);
+}
+
 const uint8_t scanSnrPresets[] = {1,2,3,4,5,6,8,10,12,15,20};
 const uint8_t scanSnrPresetsCount = sizeof(scanSnrPresets)/sizeof(scanSnrPresets[0]);
 uint8_t nextScanSnr(uint8_t current) {
   for (uint8_t i=0;i<scanSnrPresetsCount;i++) if (current==scanSnrPresets[i]) return scanSnrPresets[(i+1)%scanSnrPresetsCount];
   return scanSnrPresets[0];
 }
-const uint8_t scanStopSecPresets[] = {2,3,5,8,10,15,20,30};
-const uint8_t scanStopSecPresetsCount = sizeof(scanStopSecPresets)/sizeof(scanStopSecPresets[0]);
-uint8_t nextScanStopSec(uint8_t current) {
-  for (uint8_t i=0;i<scanStopSecPresetsCount;i++) if (current==scanStopSecPresets[i]) return scanStopSecPresets[(i+1)%scanStopSecPresetsCount];
-  return scanStopSecPresets[0];
-}
-
 long elapsedSaver = millis();
 bool Saver = false;
 int saverX;
@@ -468,13 +529,25 @@ int saverVY = 2;
 long elapsedSaverMove = millis();
 uint16_t saverColor = TFT_DARKCYAN;
 uint8_t saverColorIdx = 0;
-const uint16_t saverColors[] = {TFT_DARKCYAN, TFT_ORANGE, TFT_MAGENTA, TFT_GREENYELLOW, TFT_YELLOW, TFT_PINK, TFT_SKYBLUE};
+uint16_t saverColors[] = {TFT_DARKCYAN, TFT_ORANGE, TFT_MAGENTA, TFT_GREENYELLOW, TFT_YELLOW, TFT_PINK, TFT_SKYBLUE};
 const uint8_t saverColorsCount = sizeof(saverColors) / sizeof(saverColors[0]);
+
+void refreshSaverColors() {
+  saverColors[0] = TFT_DARKCYAN;
+  saverColors[1] = TFT_ORANGE;
+  saverColors[2] = TFT_MAGENTA;
+  saverColors[3] = TFT_GREENYELLOW;
+  saverColors[4] = TFT_YELLOW;
+  saverColors[5] = TFT_PINK;
+  saverColors[6] = TFT_SKYBLUE;
+  saverColor = saverColors[saverColorIdx];
+}
 
 bool pressed;
 bool presStat;
 bool audioMuteOn  = true;
 bool audioMuteOff = false;
+int  hwMuteLevel  = -1;
 bool RDS          = true;
 bool SEEK         = false;
 bool bright       = false;
@@ -491,6 +564,9 @@ int NewRSSI;
 int NewSNR;
 int encBut;
 uint8_t AGCgain;
+int8_t agcModeByMode[5] = {-1, -1, -1, -1, -1};
+int8_t agcLevelByMode[5] = {-1, -1, -1, -1, -1};
+uint8_t lastAgcMode = 255;
 int PrevRSSI        = 0;
 int strongup        = 0;
 
@@ -585,8 +661,33 @@ char bufferRdsTime[32];
 unsigned long FreqSI5351 = 3276800;
 unsigned long calibratvalSI5351;
 
-int Xsmtr   =   0;
-int Ysmtr   =  80;
+int Xsmtr   = 183;
+int Ysmtr   =   4;
+int tFreqX = 4, tFreqY = 2, tFreqW = 172, tFreqH = 84;
+int tSigW = 140, tSigH = 84;
+int tClkX = 4, tClkY = 92, tClkW = 96, tClkH = 54;
+int tClkStopYOffset = 34;
+bool tClkStopRightAlign = false;
+int tClkStopClearW = 88;
+int tBatX = 104, tBatY = 92, tBatW = 72, tBatH = 54;
+int tRdsX = 180, tRdsY = 92, tRdsW = 140, tRdsH = 54;
+int tCwY = 148, tCwW = 312;
+int tFreqDigitYOffset = 0;
+int tSigLabelYOffset = 0;
+int tSigTopLeftYOffset = 0;
+int tSigTopRightYOffset = 0;
+int tSigBarYOffset = 0;
+int tSigExtraYOffset = 0;
+int tRdsStationYOffset = 0;
+int tFreqBotYOffset = 0;
+int tFreqDigitSize = 4;
+int tFreqDigitPxH = 48;
+int tVolBarW = 54;
+int tBatIconW = 58;
+int tRdsMsgLines = 3;
+int tRdsMsgYOffset = 22;
+int tStatusY = 146;
+bool tRdsMultiline = true;
 
 bool rssiHistoryOn = false;
 bool prevrssiHistoryOn;
@@ -653,6 +754,10 @@ void logDiscovery(long freqKHz, uint8_t snr) {
 bool priorityOn = false;
 bool priorityHasTarget = false;
 VFOState priorityTarget = {0, 0, 0, 0, 0, false};
+bool priorityHasTargetB = false;
+VFOState priorityTargetB = {0, 0, 0, 0, 0, false};
+bool priorityCheckNextIsB = false;
+bool priorityActiveIsB = false;
 VFOState priorityReturnState = {0, 0, 0, 0, 0, false};
 bool priorityActive = false;
 unsigned long priorityActiveSince = 0;
@@ -783,8 +888,259 @@ void updateCWDecoderPin() {
 
 }
 
-int XVolInd =   0;
-int YVolInd = 130;
+
+bool dashLastDotOn = false;
+String dashLastCWText = "";
+
+bool rttyDecoderOn = false;
+bool prevrttyDecoderOn;
+String rttyDecodedText = "";
+#define RTTY_MAX_TEXT_LEN 120
+
+#define RTTY_MARK_HZ    2125.0
+#define RTTY_SPACE_HZ   2295.0
+#define RTTY_BAUD       45.45
+#define RTTY_ADC_BLOCK  32
+
+unsigned long rttyBitPeriodUs = (unsigned long)(1000000.0 / RTTY_BAUD);
+float rttyLastMagMark = 0, rttyLastMagSpace = 0;
+
+enum RttyRxState { RTTY_IDLE, RTTY_CONFIRM_START, RTTY_DATA, RTTY_CONFIRM_STOP };
+RttyRxState rttyState = RTTY_IDLE;
+unsigned long rttyStartEdgeTime = 0;
+unsigned long rttyNextDeadline = 0;
+int rttyDataBitIdx = 0;
+uint8_t rttyCode = 0;
+bool rttyFigsMode = false;
+bool rttyLastToneMark = true;
+unsigned long rttyLastIdlePoll = 0;
+#define RTTY_IDLE_POLL_INTERVAL_MS 3
+
+const char rttyLtrsTable[32] = {
+    0 , 'T','\r', 'O', ' ', 'H', 'N', 'M',
+  '\n', 'L', 'R', 'G', 'I', 'P', 'C', 'V',
+  'E' , 'Z', 'D', 'B', 'S', 'Y', 'F', 'X',
+  'A' , 'W', 'J',  0 , 'U', 'Q', 'K',  0
+};
+const char rttyFigsTable[32] = {
+    0 , '5','\r', '9', ' ', '#', ',', '.',
+  '\n', ')', '4', '&', '8', '0', ':', ';',
+  '3' , '"', '$', '?', '\a','6', '!', '/',
+  '-' , '2','\'',  0 , '7', '1', '(',  0
+};
+
+void trimRTTYText() {
+  if (rttyDecodedText.length() > RTTY_MAX_TEXT_LEN) {
+    rttyDecodedText = rttyDecodedText.substring(rttyDecodedText.length() - RTTY_MAX_TEXT_LEN);
+  }
+}
+
+float goertzelMagnitude(const int* samples, int n, float targetHz, float sampleRateHz) {
+  float k = 0.5 + (n * targetHz) / sampleRateHz;
+  float omega = (2.0 * PI * k) / n;
+  float cosine = cos(omega);
+  float coeff = 2.0 * cosine;
+  float q0 = 0, q1 = 0, q2 = 0;
+  for (int i = 0; i < n; i++) {
+    q0 = coeff * q1 - q2 + samples[i];
+    q2 = q1;
+    q1 = q0;
+  }
+  float real = q1 - q2 * cosine;
+  float imag = q2 * sin(omega);
+  return sqrt(real * real + imag * imag);
+}
+
+bool rttySampleToneIsMark() {
+  static int samples[RTTY_ADC_BLOCK];
+  unsigned long t0 = micros();
+  for (int i = 0; i < RTTY_ADC_BLOCK; i++) samples[i] = analogRead(DECODER_PIN);
+  unsigned long elapsed = micros() - t0;
+  if (elapsed == 0) elapsed = 1;
+  float sr = (RTTY_ADC_BLOCK * 1000000.0) / (float)elapsed;
+
+  rttyLastMagMark  = goertzelMagnitude(samples, RTTY_ADC_BLOCK, RTTY_MARK_HZ, sr);
+  rttyLastMagSpace = goertzelMagnitude(samples, RTTY_ADC_BLOCK, RTTY_SPACE_HZ, sr);
+  return rttyLastMagMark >= rttyLastMagSpace;
+}
+
+void rttyDecodeCode(uint8_t code) {
+  if (code == 27) { rttyFigsMode = true; return; }
+  if (code == 31) { rttyFigsMode = false; return; }
+  char c = rttyFigsMode ? rttyFigsTable[code] : rttyLtrsTable[code];
+  if (c == 0) return;
+  if (c == '\r' or c == '\n') c = ' ';
+  rttyDecodedText += c;
+  trimRTTYText();
+}
+
+void processRTTYEvents() {
+  unsigned long now = micros();
+
+  if (rttyState == RTTY_IDLE) {
+    if (millis() - rttyLastIdlePoll < RTTY_IDLE_POLL_INTERVAL_MS) return;
+    rttyLastIdlePoll = millis();
+    bool toneMark = rttySampleToneIsMark();
+    if (rttyLastToneMark and !toneMark) {
+      rttyStartEdgeTime = now;
+      rttyNextDeadline = rttyStartEdgeTime + (rttyBitPeriodUs / 2);
+      rttyState = RTTY_CONFIRM_START;
+    }
+    rttyLastToneMark = toneMark;
+    return;
+  }
+
+  if (now < rttyNextDeadline) return;
+
+  switch (rttyState) {
+    case RTTY_CONFIRM_START: {
+      bool toneMark = rttySampleToneIsMark();
+      if (toneMark) {
+        rttyState = RTTY_IDLE;
+        rttyLastToneMark = true;
+        return;
+      }
+      rttyCode = 0;
+      rttyDataBitIdx = 0;
+      rttyNextDeadline = rttyStartEdgeTime + (unsigned long)(rttyBitPeriodUs * 1.5);
+      rttyState = RTTY_DATA;
+      break;
+    }
+    case RTTY_DATA: {
+      bool toneMark = rttySampleToneIsMark();
+      if (toneMark) rttyCode |= (1 << rttyDataBitIdx);
+      rttyDataBitIdx++;
+      if (rttyDataBitIdx >= 5) {
+        rttyNextDeadline = rttyStartEdgeTime + (unsigned long)(rttyBitPeriodUs * 6.5);
+        rttyState = RTTY_CONFIRM_STOP;
+      } else {
+        rttyNextDeadline = rttyStartEdgeTime + (unsigned long)(rttyBitPeriodUs * (1.5 + rttyDataBitIdx));
+      }
+      break;
+    }
+    case RTTY_CONFIRM_STOP: {
+      bool toneMark = rttySampleToneIsMark();
+      if (toneMark) {
+        rttyDecodeCode(rttyCode);
+      } else {
+        rttyDecodedText += '#';
+        trimRTTYText();
+      }
+      rttyState = RTTY_IDLE;
+      rttyLastToneMark = true;
+      break;
+    }
+    default:
+      rttyState = RTTY_IDLE;
+      break;
+  }
+}
+
+void updateRTTYDecoderPin() {
+  if (rttyDecoderOn) {
+    pinMode(DECODER_PIN, INPUT);
+    rttyState = RTTY_IDLE;
+    rttyLastToneMark = true;
+    rttyLastIdlePoll = 0;
+  }
+}
+
+int XVolInd =  95;
+
+String dashLastHmStr = "";
+String dashLastDateStr = "";
+int dashLastDrawnBat = -999;
+bool dashLastDrawnBatVolt = false;
+String dashLastSLabel = "";
+int dashLastBarW = -1;
+String dashLastExtra = "";
+bool dashEverDrawnSig = false;
+bool dashLastVFOState = false;
+bool dashEverDrawnVFO = false;
+String dashLastStationShown = "";
+String dashLastMsgShown = "";
+String dashFreqTop = "";
+String dashFreqVfo = "";
+String dashFreqMain = "";
+String dashFreqDec = "";
+String dashFreqBot = "";
+String dashFreqLock = "";
+String dashLastTopRight = "";
+String dashLastTopLeft = "";
+int dashLastPeakBarW = -1;
+int dashSigPeakBarW = 0;
+unsigned long dashSigPeakDecayMs = 0;
+#define DASH_SIG_PEAK_DECAY_MS 80
+
+
+unsigned long dashLastClockDraw = 0;
+
+void resetDashboardRedrawTrackers() {
+  dashLastHmStr = ""; dashLastDateStr = "";
+  dashLastDrawnBat = -999; dashLastDrawnBatVolt = false;
+  dashLastSLabel = ""; dashLastBarW = -1; dashLastExtra = ""; dashEverDrawnSig = false;
+  dashLastPeakBarW = -1; dashSigPeakBarW = 0; dashSigPeakDecayMs = 0;
+  dashLastDotOn = false; dashLastCWText = "";
+  dashEverDrawnVFO = false;
+  dashLastStationShown = ""; dashLastMsgShown = "";
+  dashFreqTop = ""; dashFreqVfo = ""; dashFreqMain = ""; dashFreqDec = ""; dashFreqBot = ""; dashFreqLock = ""; dashLastTopRight = ""; dashLastTopLeft = "";
+  dashLastClockDraw = 0;
+}
+int YVolInd =  95;
+
+void applyDashboardLayout(bool vertical) {
+  if (vertical) {
+    tFreqX = 2;   tFreqY = 2;   tFreqW = 232; tFreqH = 61;
+    Xsmtr  = 5;   Ysmtr  = 69;  tSigW  = 232; tSigH  = 58;
+    tRdsX  = 3;   tRdsY  = 125; tRdsW  = 232; tRdsH  = 38;
+    tClkX  = 4;   tClkY  = 164; tClkW  = 114; tClkH  = 48;
+    tBatX  = 122; tBatY  = 164; tBatW  = 114; tBatH  = 48;
+    XVolInd = 113; YVolInd = 167;
+    tBatIconW = 103; tVolBarW = 103;
+    tCwY = 0; tCwW = 0;
+    tStatusY = 0;
+    tRdsMultiline = false;
+    tRdsMsgLines = 1;
+    tRdsMsgYOffset = 26;
+    tFreqDigitYOffset = 19;
+    tFreqDigitSize = 4;
+    tFreqDigitPxH = 48;
+    tFreqBotYOffset = 4;
+    tSigLabelYOffset = 10;
+    tSigTopLeftYOffset = -4;
+    tSigTopRightYOffset = -4;
+    tSigBarYOffset = 4;
+    tSigExtraYOffset = 5;
+    tRdsStationYOffset = 3;
+    tClkStopYOffset = tClkH - 10;
+    tClkStopRightAlign = true;
+    tClkStopClearW = 40;
+  } else {
+    tFreqX = 4;   tFreqY = 2;   tFreqW = 172; tFreqH = 84;
+    Xsmtr  = 183; Ysmtr  = 4;   tSigW  = 140; tSigH  = 84;
+    tRdsX  = 180; tRdsY  = 92;  tRdsW  = 140; tRdsH  = 54;
+    tClkX  = 4;   tClkY  = 92;  tClkW  = 96;  tClkH  = 54;
+    tBatX  = 104; tBatY  = 92;  tBatW  = 72;  tBatH  = 54;
+    XVolInd = 95; YVolInd = 95;
+    tBatIconW = 58; tVolBarW = 54;
+    tCwY = 148; tCwW = 312;
+    tStatusY = 146;
+    tRdsMultiline = true;
+    tRdsMsgLines = 3;
+    tRdsMsgYOffset = 22;
+    tFreqDigitYOffset = 0;
+    tSigLabelYOffset = 0;
+    tSigTopLeftYOffset = 0;
+    tSigTopRightYOffset = 0;
+    tSigBarYOffset = 0;
+    tSigExtraYOffset = 5;
+    tRdsStationYOffset = 0;
+    tFreqBotYOffset = 0;
+    tClkStopYOffset = 34;
+    tClkStopRightAlign = false;
+    tClkStopClearW = tClkW - 8;
+  }
+}
 
 int XFreqDispl  =   0;
 int YFreqDispl  =   0;
@@ -919,7 +1275,7 @@ const int lastdignum    = (sizeof dn / sizeof(DigNum)) - 1;
 uint16_t bandMode[(lastBand + 1)];
 
 #define offsetEEPROM       32
-#define EEPROM_SIZE        2304
+#define EEPROM_SIZE        4096
 
 struct StoreStruct {
   byte     chkDigit;
@@ -1009,6 +1365,20 @@ struct StoreStruct {
   byte    chk10;
   uint16_t touchCalData[5];
   byte    chk11;
+  uint8_t themeIdx;
+  byte    chk12;
+  uint8_t squelchAdaptiveOn;
+  byte    chk13;
+  byte    chk14;
+  uint8_t rttyDecoderOn;
+  byte    chk15;
+  uint16_t bandFreqSave[lastBand + 1];
+  uint8_t  bandModeSave[lastBand + 1];
+  byte    chk16;
+  uint8_t batVolt;
+  byte    chk17;
+  uint8_t closeCallOn;
+  byte    chk18;
 };
 
 StoreStruct storage = {
@@ -1099,21 +1469,37 @@ StoreStruct storage = {
   '@',
   {387, 3530, 246, 3555, 7},
   '@',
+  0,
+  '@',
+  0,
+  '@',
+  0,
+  0,
+  '@',
+  {0},
+  {0},
+  '@',
 };
 
-#define offsetMemoEEPROM       360
+#define offsetMemoEEPROM       (offsetEEPROM + (int)sizeof(StoreStruct) + 32)
+#define offsetMemoEEPROM_LEGACY 360
 
 typedef struct
 {
   uint16_t        freq;
   uint8_t         band;
   char            Name[21];
+  uint8_t         favorite;
+  char            country[4];
+  char            language[4];
 } MemoryBank;
 MemoryBank MemoBank[75];
 
-bool memoFavorite[75];
 const int lastMemoBank = (sizeof MemoBank / sizeof(MemoryBank)) - 1;
 Preset preset [lastMemory + lastMemoBank + 1];
+
+static_assert(offsetMemoEEPROM + sizeof(MemoBank) <= EEPROM_SIZE,
+              "MemoBank nie miesci sie w EEPROM_SIZE - zwieksz EEPROM_SIZE");
 
 typedef struct
 {
@@ -1136,40 +1522,53 @@ TFT_eSprite spr = TFT_eSprite(&tft);
 SI4735 si4735;
 
 void drawCWDecoderView() {
-  tft.fillRect(Xsmtr + 2, Ysmtr + 6, 236, 46, TFT_BLACK);
-  tft.drawRect(Xsmtr + 2, Ysmtr + 6, 236, 46, TFT_DARKGREY);
+  String displayText = cwDecodedText;
+  if (displayText.length() > 40) displayText = displayText.substring(displayText.length() - 40);
+  if (cwToneActive == dashLastDotOn and displayText == dashLastCWText) return;
+  dashLastDotOn = cwToneActive; dashLastCWText = displayText;
+
+  if (tCwW == 0) return;
+  tft.fillRect(4, tCwY, tCwW, 14, TFT_BLACK);
 
   tftPlSetFont(T1012_T);
   tftPlSetSize(1);
   tftPlSetStyle(NRG_T);
   tftPlSetDatum(BL_T);
   tftPlSetColor(TFT_CYAN, TFT_TRANS);
-  tftPlPrint("DEKODER CW", Xsmtr + 8, Ysmtr + 17);
-
-  tftPlSetColor(TFT_SILVER, TFT_TRANS);
-  tftPlSetDatum(BR_T);
-  tftPlPrint("avg:" + String(cwLastRawAvg) + " rng:" + String(cwLastRawRange) + " n:" + String(cwStateChangeCount), Xsmtr + 231, Ysmtr + 17);
+  tftPlPrint("CW", 6, tCwY + 12);
 
   uint16_t dotColor = cwToneActive ? TFT_YELLOW : TFT_DARKGREY;
-  tft.fillCircle(Xsmtr + 222, Ysmtr + 30, 4, dotColor);
+  tft.fillCircle(32, tCwY + 6, 4, dotColor);
 
-  String displayText = cwDecodedText;
-  if (displayText.length() > 24) displayText = displayText.substring(displayText.length() - 24);
-  tftPlSetDatum(BL_T);
   tftPlSetColor(TFT_YELLOW, TFT_TRANS);
-  tftPlPrint(displayText, Xsmtr + 8, Ysmtr + 37);
+  tftPlPrint(displayText, 44, tCwY + 12);
+}
+
+void drawRttyDecoderView() {
+  String displayText = rttyDecodedText;
+  if (displayText.length() > 40) displayText = displayText.substring(displayText.length() - 40);
+  if (rttyLastToneMark == dashLastDotOn and displayText == dashLastCWText) return;
+  dashLastDotOn = rttyLastToneMark; dashLastCWText = displayText;
+
+  if (tCwW == 0) return;
+  tft.fillRect(4, tCwY, tCwW, 14, TFT_BLACK);
+
+  tftPlSetFont(T1012_T);
+  tftPlSetSize(1);
+  tftPlSetStyle(NRG_T);
+  tftPlSetDatum(BL_T);
+  tftPlSetColor(TFT_CYAN, TFT_TRANS);
+  tftPlPrint("RTTY", 6, tCwY + 12);
+
+  uint16_t dotColor = rttyLastToneMark ? TFT_DARKGREY : TFT_YELLOW;
+  tft.fillCircle(32, tCwY + 6, 4, dotColor);
+
+  tftPlSetColor(TFT_YELLOW, TFT_TRANS);
+  tftPlPrint(displayText, 44, tCwY + 12);
 }
 
 void drawLockIndicator() {
-  tft.fillRect(0, 58, 42, 12, TFT_BLACK);
-  if (screenLocked) {
-    tftPlSetFont(T1012_T);
-    tftPlSetSize(1);
-    tftPlSetStyle(NRG_T);
-    tftPlSetDatum(BL_T);
-    tftPlSetColor(TFT_RED, TFT_TRANS);
-    tftPlPrint("LOCK", 0, 68);
-  }
+  if (FirstLayer or ThirdLayer) drawDashboardFreq();
 }
 
 void cycleStep() {
@@ -1197,16 +1596,25 @@ void cycleStep() {
 }
 
 void drawVFOIndicator() {
-  tft.fillRect(46, 58, 24, 12, TFT_BLACK);
-  tftPlSetFont(T1012_T);
-  tftPlSetSize(1);
-  tftPlSetStyle(NRG_T);
-  tftPlSetDatum(BL_T);
-  tftPlSetColor(TFT_CYAN, TFT_TRANS);
-  tftPlPrint(vfoActiveIsB ? "VFO B" : "VFO A", 46, 68);
+  String vfoStr = String(vfoActiveIsB ? "VFO B" : "VFO A") + (AGCgain ? "  AGC" : "");
+  if ((FirstLayer or ThirdLayer) and vfoStr != dashFreqVfo) {
+    dashFreqVfo = vfoStr;
+    dashLastVFOState = vfoActiveIsB;
+    dashEverDrawnVFO = true;
+    tftPlSetFont(T1012_T);
+    tftPlSetSize(1);
+    tftPlSetStyle(NRG_T);
+    int vfoW = tftPlTextWidth(vfoStr);
+    tft.fillRect(tFreqX + tFreqW - 8 - vfoW - 2, tFreqY + 4, vfoW + 4, 12, TFT_BLACK);
+    tftPlSetColor(TFT_CYAN, TFT_TRANS);
+    tftPlSetDatum(BR_T);
+    tftPlPrint(vfoStr, tFreqX + tFreqW - 8, tFreqY + 14);
+    tftPlSetDatum(BL_T);
+  }
 }
 
 void swapVFO() {
+  si4735.setAudioMute(audioMuteOn);
   VFOState current;
   current.bandIdx = bandIdx;
   current.mode = currentMode;
@@ -1224,28 +1632,51 @@ void swapVFO() {
     *target = current;
     target->valid = true;
   } else {
+    bool sameConfig = (target->bandIdx == bandIdx) and (target->mode == currentMode);
     bandIdx = target->bandIdx;
     currentMode = target->mode;
     currentBFO = target->bfo;
     band[bandIdx].currentFreq = (uint16_t) target->freq;
     band[bandIdx].currentStep = target->step;
-    BandSet();
+    if (sameConfig) {
+      si4735.setFrequency((uint16_t) target->freq);
+      si4735.setFrequencyStep(target->step);
+      if (currentMode == LSB or currentMode == USB or currentMode == CW) {
+        if (currentMode == CW) si4735.setSSBBfo(CW_PITCH_HZ * (cwUpperSideband ? 1 : -1) + currentBFOmanu);
+        else if (ecssOn) si4735.setSSBBfo(currentBFOmanu + (currentMode == USB ? calUSB : calLSB));
+        else si4735.setSSBBfo(currentBFO + currentBFOmanu + ((currentMode == USB) ? calUSB : calLSB));
+      }
+    } else {
+      BandSet();
+    }
     currentFrequency = si4735.getFrequency();
   }
+  delay(20);
+  si4735.setAudioMute(audioMuteOff);
   FreqDispl();
   drawVFOIndicator();
 }
 
 void drawPriorityIndicator() {
-  tft.fillRect(100, 58, 60, 12, TFT_BLACK);
-  if (priorityOn) {
-    tftPlSetFont(T1012_T);
-    tftPlSetSize(1);
-    tftPlSetStyle(NRG_T);
-    tftPlSetDatum(BL_T);
-    tftPlSetColor(priorityActive ? TFT_YELLOW : TFT_GREEN, TFT_TRANS);
-    tftPlPrint(priorityActive ? "PRIO!" : "PRIO", 100, 68);
+  if (tStatusY == 0) return;
+  tft.fillRect(104, tStatusY, 60, 14, TFT_BLACK);
+  if (!priorityOn) return;
+  String label;
+  if (priorityActive) {
+    label = priorityActiveIsB ? "P2!" : "P1!";
+  } else if (priorityHasTarget and priorityHasTargetB) {
+    label = "P1+2";
+  } else if (priorityHasTargetB) {
+    label = "P2";
+  } else {
+    label = "P1";
   }
+  tftPlSetFont(T1012_T);
+  tftPlSetSize(1);
+  tftPlSetStyle(NRG_T);
+  tftPlSetDatum(BL_T);
+  tftPlSetColor(priorityActive ? TFT_YELLOW : TFT_GREEN, TFT_TRANS);
+  tftPlPrint(label, 104, tStatusY + 12);
 }
 
 unsigned long stopwatchElapsedMs() {
@@ -1255,17 +1686,18 @@ unsigned long stopwatchElapsedMs() {
 }
 
 void drawStopwatch() {
-  tft.fillRect(163, 58, 62, 12, TFT_BLACK);
+  int clearX = tClkStopRightAlign ? (tClkX + tClkW - 4 - tClkStopClearW) : (tClkX + 4);
+  tft.fillRect(clearX, tClkY + tClkStopYOffset, tClkStopClearW, 9, TFT_BLACK);
   if (stopwatchAccum == 0 and !stopwatchRunning) return;
   unsigned long s = stopwatchElapsedMs() / 1000;
   char buf[8];
   sprintf(buf, "%02lu:%02lu", s / 60, s % 60);
-  tftPlSetFont(T1012_T);
-  tftPlSetSize(1);
-  tftPlSetStyle(NRG_T);
-  tftPlSetDatum(BL_T);
-  tftPlSetColor(stopwatchRunning ? TFT_GREEN : TFT_SILVER, TFT_TRANS);
-  tftPlPrint(String(buf), 163, 68);
+  tft.setTextColor(stopwatchRunning ? TFT_GREEN : TFT_SILVER, TFT_BLACK);
+  tft.setTextSize(1);
+  tft.setTextDatum(tClkStopRightAlign ? TR_DATUM : TL_DATUM);
+  tft.setTextPadding(0);
+  int textX = tClkStopRightAlign ? (tClkX + tClkW - 4) : (tClkX + 4);
+  tft.drawString(String(buf), textX, tClkY + tClkStopYOffset);
 }
 
 void toggleStopwatch() {
@@ -1285,14 +1717,15 @@ void resetStopwatch() {
   drawStopwatch();
 }
 
-void savePriorityTarget() {
-  priorityTarget.bandIdx = bandIdx;
-  priorityTarget.mode = currentMode;
-  priorityTarget.freq = si4735.getFrequency();
-  priorityTarget.step = band[bandIdx].currentStep;
-  priorityTarget.bfo = currentBFO;
-  priorityTarget.valid = true;
-  priorityHasTarget = true;
+void savePriorityTarget(bool slotB) {
+  VFOState &t = slotB ? priorityTargetB : priorityTarget;
+  t.bandIdx = bandIdx;
+  t.mode = currentMode;
+  t.freq = si4735.getFrequency();
+  t.step = band[bandIdx].currentStep;
+  t.bfo = currentBFO;
+  t.valid = true;
+  if (slotB) priorityHasTargetB = true; else priorityHasTarget = true;
   priorityOn = true;
   drawPriorityIndicator();
 }
@@ -1313,7 +1746,7 @@ void returnFromPriority() {
 }
 
 void checkPriorityChannel() {
-  if (!priorityOn or !priorityHasTarget) return;
+  if (!priorityOn or (!priorityHasTarget and !priorityHasTargetB)) return;
 
   if (priorityActive) {
 
@@ -1329,6 +1762,15 @@ void checkPriorityChannel() {
   if (millis() - lastPriorityCheck < PRIORITY_CHECK_INTERVAL_MS) return;
   lastPriorityCheck = millis();
 
+  bool checkB;
+  if (priorityHasTarget and priorityHasTargetB) {
+    checkB = priorityCheckNextIsB;
+    priorityCheckNextIsB = !priorityCheckNextIsB;
+  } else {
+    checkB = priorityHasTargetB;
+  }
+  VFOState &target = checkB ? priorityTargetB : priorityTarget;
+
   priorityReturnState.bandIdx = bandIdx;
   priorityReturnState.mode = currentMode;
   priorityReturnState.freq = si4735.getFrequency();
@@ -1337,11 +1779,11 @@ void checkPriorityChannel() {
   priorityReturnState.valid = true;
 
   si4735.setAudioMute(audioMuteOn);
-  bandIdx = priorityTarget.bandIdx;
-  currentMode = priorityTarget.mode;
-  currentBFO = priorityTarget.bfo;
-  band[bandIdx].currentFreq = (uint16_t) priorityTarget.freq;
-  band[bandIdx].currentStep = priorityTarget.step;
+  bandIdx = target.bandIdx;
+  currentMode = target.mode;
+  currentBFO = target.bfo;
+  band[bandIdx].currentFreq = (uint16_t) target.freq;
+  band[bandIdx].currentStep = target.step;
   BandSet();
   delay(150);
   si4735.getCurrentReceivedSignalQuality();
@@ -1349,6 +1791,7 @@ void checkPriorityChannel() {
   if (si4735.getCurrentSNR() >= PRIORITY_SNR_THRESHOLD) {
     si4735.setAudioMute(audioMuteOff);
     priorityActive = true;
+    priorityActiveIsB = checkB;
     priorityActiveSince = millis();
     currentFrequency = si4735.getFrequency();
     FreqDispl();
@@ -1407,12 +1850,19 @@ void showFreqHistory() {
     else freqStr = String((long)freqHistory[i].freq) + " kHz";
     String label = freqStr + "  " + String(band[freqHistory[i].bandIdx].bandName);
     tftPlSetStyle(REG_T);
+    tftPlSetDatum(BL_T);
     tftPlSetColor(TFT_WHITE, TFT_TRANS);
     tftPlPrint(label, d + 10, startY + i * rowH);
   }
 
+  tftPlSetFont(T1012_T);
+  tftPlSetSize(1);
+  tftPlSetStyle(BOL_T);
+  tftPlSetDatum(BL_T);
   tftPlSetColor(TFT_SILVER, TFT_TRANS);
-  tftPlPrint("Dotknij pozycję aby wrócić, gdziekolwiek indziej aby zamknąć", d + 10, 218);
+  tftPlPrint("Dotknij pozycję aby", d + 10, 205);
+  tftPlPrint("wrócić, gdziekolwiek", d + 10, 214);
+  tftPlPrint("indziej aby zamknąć", d + 10, 223);
 
   bool done = false;
   unsigned long startTime = millis();
@@ -1458,6 +1908,9 @@ String webJsonStatus() {
   String rdsText = (currentMode == FM and rdsMsg) ? String(rdsMsg) : "";
   rdsStation = webJsonEscape(rdsStation);
   rdsText = webJsonEscape(rdsText);
+  String rdsPtyName = (currentMode == FM and rdsPTY < 32) ? String(rdsPtyNames[rdsPTY]) : "";
+  char rdsPiHex[6];
+  sprintf(rdsPiHex, "%04X", rdsPI);
 
   String j = "{";
   j += "\"freq\":\"" + freqStr + "\",";
@@ -1473,20 +1926,139 @@ String webJsonStatus() {
   j += "\"muted\":" + String(Mutestat ? "true" : "false") + ",";
   j += "\"agcMode\":" + String(AGCgain) + ",";
   j += "\"agcLevel\":" + String(currentAGCgain) + ",";
+  j += "\"squelchOn\":" + String(squelch ? "true" : "false") + ",";
+  j += "\"squelchLevel\":" + String(currentSquelch) + ",";
+  j += "\"squelchUseRssi\":" + String(SquelchUsesRSSI ? "true" : "false") + ",";
   j += "\"vfo\":\"" + String(vfoActiveIsB ? "B" : "A") + "\",";
   j += "\"priorityOn\":" + String(priorityOn ? "true" : "false") + ",";
   j += "\"priorityActive\":" + String(priorityActive ? "true" : "false") + ",";
+  j += "\"priorityHasA\":" + String(priorityHasTarget ? "true" : "false") + ",";
+  j += "\"priorityHasB\":" + String(priorityHasTargetB ? "true" : "false") + ",";
+  j += "\"priorityActiveIsB\":" + String(priorityActiveIsB ? "true" : "false") + ",";
+  j += "\"priorityFreqA\":" + String(priorityHasTarget ? (long)priorityTarget.freq : -1) + ",";
+  j += "\"priorityFreqB\":" + String(priorityHasTargetB ? (long)priorityTargetB.freq : -1) + ",";
   j += "\"stopwatch\":\"" + String(swbuf) + "\",";
   j += "\"stopwatchRunning\":" + String(stopwatchRunning ? "true" : "false") + ",";
   j += "\"locked\":" + String(screenLocked ? "true" : "false") + ",";
   j += "\"battery\":" + String(readVsupply(), 2) + ",";
   j += "\"rdsStation\":\"" + rdsStation + "\",";
   j += "\"rdsText\":\"" + rdsText + "\",";
+  j += "\"rdsPty\":\"" + rdsPtyName + "\",";
+  j += "\"rdsPi\":\"" + ((currentMode == FM and rdsPI) ? String(rdsPiHex) : String("")) + "\",";
   j += "\"scanning\":" + String(SCANbut ? "true" : "false") + ",";
   j += "\"scanPaused\":" + String(SCANpause ? "true" : "false") + ",";
   j += "\"scanFreq\":" + String(currentScanFreq);
   j += "}";
   return j;
+}
+
+String serialLineBuf = "";
+
+void serialHandleLine(String line) {
+  line.trim();
+  if (line.length() == 0) return;
+  int sp = line.indexOf(' ');
+  String cmd = (sp >= 0) ? line.substring(0, sp) : line;
+  String argStr = (sp >= 0) ? line.substring(sp + 1) : "";
+  argStr.trim();
+  cmd.toUpperCase();
+
+  if (cmd == "STATUS") {
+    Serial.println(webJsonStatus());
+  } else if (cmd == "FREQ") {
+    if (argStr.length() > 0) {
+      float f = argStr.toFloat();
+      uint16_t target = (currentMode == FM) ? (uint16_t)(f * 100) : (uint16_t)f;
+      if (target >= band[bandIdx].minimumFreq and target <= band[bandIdx].maximumFreq) {
+        si4735.setFrequency(target);
+        currentFrequency = si4735.getFrequency();
+        band[bandIdx].currentFreq = target;
+        FreqDispl();
+        Serial.println("OK");
+      } else {
+        Serial.println("ERR zakres");
+      }
+    } else {
+      Serial.println(String(si4735.getFrequency()));
+    }
+  } else if (cmd == "BAND") {
+    if (argStr.length() > 0) {
+      int i = argStr.toInt();
+      if (i >= 0 and i <= lastBand and i != bandIdx) {
+        bandIdx = i;
+        BandSet();
+        currentFrequency = si4735.getFrequency();
+        FreqDispl();
+        Serial.println("OK");
+      } else {
+        Serial.println("ERR zakres");
+      }
+    } else {
+      Serial.println(String(bandIdx));
+    }
+  } else if (cmd == "MODE") {
+    if (argStr.length() > 0) {
+      int m = argStr.toInt();
+      if (m >= 0 and m <= 4 and m != currentMode and bandIdx != 0) {
+        currentMode = m;
+        BandSet();
+        currentFrequency = si4735.getFrequency();
+        FreqDispl();
+        Serial.println("OK");
+      } else {
+        Serial.println("ERR zakres_lub_FM");
+      }
+    } else {
+      Serial.println(String(currentMode));
+    }
+  } else if (cmd == "VOL") {
+    if (argStr.length() > 0) {
+      int v = argStr.toInt();
+      if (v < MinVOL) v = MinVOL;
+      if (v > MaxVOL) v = MaxVOL;
+      currentVOL = v;
+      si4735.setVolume(currentVOL);
+      Serial.println("OK");
+    } else {
+      Serial.println(String(currentVOL));
+    }
+  } else if (cmd == "MUTE") {
+    if (argStr.length() > 0) {
+      Mutestat = (argStr.toInt() == 1);
+      si4735.setAudioMute(Mutestat ? audioMuteOn : audioMuteOff);
+      Serial.println("OK");
+    } else {
+      Serial.println(String(Mutestat ? 1 : 0));
+    }
+  } else if (cmd == "SQUELCH") {
+    if (argStr.length() > 0) {
+      int lvl = argStr.toInt();
+      if (lvl < MinSQUELCH) lvl = MinSQUELCH;
+      if (lvl > MaxSQUELCH) lvl = MaxSQUELCH;
+      currentSquelch = lvl;
+      previousSquelch = lvl;
+      if (currentMode < 5) squelchByMode[currentMode] = lvl;
+      Serial.println("OK");
+    } else {
+      Serial.println(String(currentSquelch));
+    }
+  } else if (cmd == "HELP" or cmd == "?") {
+    Serial.println("Komendy: STATUS, FREQ [khz], BAND [idx], MODE [0-4], VOL [0-63], MUTE [0|1], SQUELCH [0-99], HELP");
+  } else {
+    Serial.println("ERR nieznana_komenda (HELP = lista)");
+  }
+}
+
+void serialPoll() {
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n') {
+      serialHandleLine(serialLineBuf);
+      serialLineBuf = "";
+    } else if (c != '\r') {
+      if (serialLineBuf.length() < 120) serialLineBuf += c;
+    }
+  }
 }
 
 void webHandleStatus() {
@@ -1503,6 +2075,16 @@ void webHandleBandsList() {
   webServer.send(200, "application/json", j);
 }
 
+String sanitizeTagCode(String s) {
+  String out = "";
+  s.toUpperCase();
+  for (unsigned int i = 0; i < s.length() and out.length() < 3; i++) {
+    char c = s.charAt(i);
+    if (c >= 'A' and c <= 'Z') out += c;
+  }
+  return out;
+}
+
 void webHandleMemoryList() {
   const char* modeNames[] = {"FM", "LSB", "USB", "AM", "CW"};
   String j = "[";
@@ -1515,8 +2097,9 @@ void webHandleMemoryList() {
     name.trim();
     uint8_t mb = MemoBank[i].band & 0x1F;
     uint8_t mm = MemoBank[i].band / 32;
-    j += "{\"slot\":" + String(i) + ",\"name\":\"" + name + "\",\"freq\":" + String(MemoBank[i].freq);
-    j += ",\"band\":\"" + String(band[mb].bandName) + "\",\"mode\":\"" + String(modeNames[mm]) + "\",\"fav\":" + String(memoFavorite[i] ? "true" : "false") + "}";
+    j += "{\"slot\":" + String(i) + ",\"name\":\"" + webJsonEscape(name) + "\",\"freq\":" + String(MemoBank[i].freq);
+    j += ",\"band\":\"" + String(band[mb].bandName) + "\",\"mode\":\"" + String(modeNames[mm]) + "\",\"fav\":" + String(MemoBank[i].favorite ? "true" : "false");
+    j += ",\"country\":\"" + String(MemoBank[i].country) + "\",\"language\":\"" + String(MemoBank[i].language) + "\"}";
   }
   j += "]";
   webServer.send(200, "application/json", j);
@@ -1525,8 +2108,75 @@ void webHandleMemoryList() {
 void webHandleMemoryFavorite() {
   if (webServer.hasArg("slot")) {
     int i = webServer.arg("slot").toInt();
-    if (i >= 0 and i <= lastMemoBank) memoFavorite[i] = !memoFavorite[i];
+    if (i >= 0 and i <= lastMemoBank) {
+      MemoBank[i].favorite = !MemoBank[i].favorite;
+      saveMemo();
+    }
   }
+  webHandleMemoryList();
+}
+
+void webHandleMemoryTags() {
+  if (webServer.hasArg("slot")) {
+    int i = webServer.arg("slot").toInt();
+    if (i >= 0 and i <= lastMemoBank) {
+      if (webServer.hasArg("country")) {
+        sanitizeTagCode(webServer.arg("country")).toCharArray(MemoBank[i].country, 4);
+      }
+      if (webServer.hasArg("language")) {
+        sanitizeTagCode(webServer.arg("language")).toCharArray(MemoBank[i].language, 4);
+      }
+      if (webServer.hasArg("name")) {
+        String nm = webServer.arg("name");
+        nm.trim();
+        nm.toCharArray(MemoBank[i].Name, 21);
+      }
+      saveMemo();
+    }
+  }
+  webHandleMemoryList();
+}
+
+void webHandleMemoryDelete() {
+  if (webServer.hasArg("slot")) {
+    int i = webServer.arg("slot").toInt();
+    if (i >= 0 and i <= lastMemoBank) {
+      MemoBank[i].freq = 0;
+      MemoBank[i].band = 0;
+      MemoBank[i].favorite = 0;
+      MemoBank[i].Name[0] = 0;
+      MemoBank[i].country[0] = 0;
+      MemoBank[i].language[0] = 0;
+      saveMemo();
+    }
+  }
+  webHandleMemoryList();
+}
+
+void webHandleMemoryAdd() {
+  long freqNow = (long) si4735.getFrequency();
+  if (currentMode == FM or freqNow < 153 or freqNow > 30000) {
+    webServer.send(400, "application/json", "{\"error\":\"Pasmo FM nie jest obslugiwane w pamieci stacji\"}");
+    return;
+  }
+  int slot = -1;
+  for (int i = 0; i <= lastMemoBank; i++) {
+    if (MemoBank[i].freq < 153 or MemoBank[i].freq > 30000) { slot = i; break; }
+  }
+  if (slot < 0) {
+    webServer.send(400, "application/json", "{\"error\":\"Brak wolnego miejsca w pamieci\"}");
+    return;
+  }
+  String name = webServer.hasArg("name") ? webServer.arg("name") : "";
+  name.trim();
+  if (name.length() == 0) name = String(freqNow) + " kHz";
+  MemoBank[slot].freq = freqNow;
+  MemoBank[slot].band = bandIdx + (currentMode * 32);
+  name.toCharArray(MemoBank[slot].Name, 21);
+  MemoBank[slot].favorite = 0;
+  MemoBank[slot].country[0] = 0;
+  MemoBank[slot].language[0] = 0;
+  saveMemo();
   webHandleMemoryList();
 }
 
@@ -1568,6 +2218,145 @@ void webHandleMemoryImport() {
     MemoBank[slot].freq = freq;
     MemoBank[slot].band = bIdx + (mIdx * 32);
     name.toCharArray(MemoBank[slot].Name, 21);
+    slot++;
+    imported++;
+  }
+  if (imported > 0) saveMemo();
+  webServer.send(200, "application/json", "{\"imported\":" + String(imported) + ",\"skipped\":" + String(skipped) + "}");
+}
+
+
+String csvEscape(String s) {
+  bool needsQuote = s.indexOf(',') >= 0 or s.indexOf('"') >= 0 or s.indexOf('\n') >= 0;
+  if (!needsQuote) return s;
+  String out = "\"";
+  for (unsigned int i = 0; i < s.length(); i++) {
+    char c = s.charAt(i);
+    if (c == '"') out += "\"\"";
+    else out += c;
+  }
+  out += "\"";
+  return out;
+}
+
+int parseCsvLine(String line, String out[3]) {
+  int field = 0;
+  unsigned int i = 0;
+  unsigned int n = line.length();
+  while (field < 3 and i < n) {
+    String val = "";
+    if (line.charAt(i) == '"') {
+      i++;
+      while (i < n) {
+        if (line.charAt(i) == '"') {
+          if (i + 1 < n and line.charAt(i + 1) == '"') { val += '"'; i += 2; }
+          else { i++; break; }
+        } else { val += line.charAt(i); i++; }
+      }
+      if (i < n and line.charAt(i) == ',') i++;
+    } else {
+      int comma = line.indexOf(',', i);
+      if (comma < 0) comma = n;
+      val = line.substring(i, comma);
+      i = comma + 1;
+    }
+    out[field++] = val;
+  }
+  return field;
+}
+
+uint8_t csvModeFromString(String m) {
+  m.trim();
+  m.toUpperCase();
+  if (m == "FM" or m == "WFM" or m == "NFM") return 0;
+  if (m == "LSB") return 1;
+  if (m == "USB") return 2;
+  if (m == "AM" or m == "DSB") return 3;
+  if (m == "CW") return 4;
+  return 255;
+}
+
+int findBandForFreq(uint16_t freqKHz) {
+  for (int i = 1; i < lastBand; i++) {
+    if (freqKHz >= band[i].minimumFreq and freqKHz <= band[i].maximumFreq) return i;
+  }
+  return lastBand;
+}
+
+void webHandleMemoryExportCsv() {
+  const char* modeNames[] = {"FM", "LSB", "USB", "AM", "CW"};
+  String txt = "Name,Frequency,Mode\n";
+  for (int i = 0; i <= lastMemoBank; i++) {
+    if (MemoBank[i].freq < 153 or MemoBank[i].freq > 30000) continue;
+    uint8_t mm = MemoBank[i].band / 32;
+    String name = String(MemoBank[i].Name);
+    name.trim();
+    unsigned long hz;
+    if (mm == 0) hz = (unsigned long)MemoBank[i].freq * 10000UL;
+    else hz = (unsigned long)MemoBank[i].freq * 1000UL;
+    txt += csvEscape(name) + "," + String(hz) + "," + String(modeNames[mm]) + "\n";
+  }
+  webServer.sendHeader("Content-Disposition", "attachment; filename=ats25x2_stations.csv");
+  webServer.send(200, "text/csv", txt);
+}
+
+void webHandleMemoryImportCsv() {
+  String body = webServer.arg("plain");
+  int imported = 0, skipped = 0;
+  int start = 0;
+  int slot = 0;
+  bool firstLine = true;
+  while (start < (int)body.length()) {
+    int nl = body.indexOf('\n', start);
+    if (nl < 0) nl = body.length();
+    String line = body.substring(start, nl);
+    start = nl + 1;
+    line.trim();
+    if (line.length() == 0) continue;
+
+    String f[3];
+    int nf = parseCsvLine(line, f);
+
+    if (firstLine) {
+      firstLine = false;
+      String freqCheck = f[1];
+      freqCheck.trim();
+      bool numeric = nf >= 2 and freqCheck.length() > 0;
+      for (unsigned int k = 0; numeric and k < freqCheck.length(); k++) {
+        if (!isDigit(freqCheck.charAt(k))) numeric = false;
+      }
+      if (!numeric) continue;
+    }
+    if (nf < 3) { skipped++; continue; }
+
+    String name = f[0]; name.trim();
+    String freqStr = f[1]; freqStr.trim();
+    String modeStr = f[2]; modeStr.trim();
+    unsigned long hz = strtoul(freqStr.c_str(), NULL, 10);
+    uint8_t mm = csvModeFromString(modeStr);
+    if (hz == 0 or mm == 255) { skipped++; continue; }
+
+    uint16_t freqInternal;
+    int bIdx;
+    if (mm == 0) {
+      freqInternal = (uint16_t)(hz / 10000UL);
+      bIdx = 0;
+      if (freqInternal < band[0].minimumFreq or freqInternal > band[0].maximumFreq) { skipped++; continue; }
+    } else {
+      freqInternal = (uint16_t)(hz / 1000UL);
+      if (freqInternal < 153 or freqInternal > 30000) { skipped++; continue; }
+      bIdx = findBandForFreq(freqInternal);
+    }
+
+    while (slot <= lastMemoBank and MemoBank[slot].freq >= 153 and MemoBank[slot].freq <= 30000) slot++;
+    if (slot > lastMemoBank) break;
+
+    MemoBank[slot].freq = freqInternal;
+    MemoBank[slot].band = bIdx + (mm * 32);
+    name.toCharArray(MemoBank[slot].Name, 21);
+    MemoBank[slot].favorite = 0;
+    MemoBank[slot].country[0] = '\0';
+    MemoBank[slot].language[0] = '\0';
     slot++;
     imported++;
   }
@@ -1656,7 +2445,8 @@ void webHandleMute() {
 
 void webHandleAGC() {
   if (webServer.hasArg("mode")) {
-    AGCgain = webServer.arg("mode").toInt();
+    int m = webServer.arg("mode").toInt();
+    if (m >= 0 and m <= 2) AGCgain = m;
     if (webServer.hasArg("level")) {
       uint8_t maxG = (currentMode == FM) ? MaxAGCgainFM : MaxAGCgainAM;
       int lvl = webServer.arg("level").toInt();
@@ -1669,6 +2459,20 @@ void webHandleAGC() {
   webServer.send(200, "application/json", webJsonStatus());
 }
 
+void webHandleSquelch() {
+  if (webServer.hasArg("on")) squelch = (webServer.arg("on").toInt() == 1);
+  if (webServer.hasArg("level")) {
+    int lvl = webServer.arg("level").toInt();
+    if (lvl < MinSQUELCH) lvl = MinSQUELCH;
+    if (lvl > MaxSQUELCH) lvl = MaxSQUELCH;
+    currentSquelch = lvl;
+    previousSquelch = lvl;
+    if (currentMode < 5) squelchByMode[currentMode] = lvl;
+  }
+  if (webServer.hasArg("useRssi")) SquelchUsesRSSI = (webServer.arg("useRssi").toInt() == 1);
+  webServer.send(200, "application/json", webJsonStatus());
+}
+
 void webHandleVFOSwap() {
   swapVFO();
   webServer.send(200, "application/json", webJsonStatus());
@@ -1677,7 +2481,8 @@ void webHandleVFOSwap() {
 void webHandlePriority() {
   if (webServer.hasArg("action")) {
     String a = webServer.arg("action");
-    if (a == "save") savePriorityTarget();
+    bool slotB = webServer.hasArg("slot") and webServer.arg("slot") == "B";
+    if (a == "save") savePriorityTarget(slotB);
     else if (a == "toggle") { priorityOn = !priorityOn; drawPriorityIndicator(); }
   }
   webServer.send(200, "application/json", webJsonStatus());
@@ -1723,10 +2528,16 @@ String webJsonSettings() {
   j += "\"scanWaterfallOn\":" + String(scanWaterfallOn ? "true" : "false") + ",";
   j += "\"scanStopOnSignal\":" + String(scanStopOnSignal ? "true" : "false") + ",";
   j += "\"ScanMarkSNR\":" + String(ScanMarkSNR) + ",";
+  j += "\"scanStopSeconds\":" + String(scanStopSeconds) + ",";
   j += "\"screenV\":" + String(screenV ? "true" : "false") + ",";
   j += "\"VHFon\":" + String(VHFon ? "true" : "false") + ",";
   j += "\"seekAccuracy\":" + String(seekAccuracy ? "true" : "false") + ",";
-  j += "\"closeCallOn\":" + String(closeCallOn ? "true" : "false");
+  j += "\"closeCallOn\":" + String(closeCallOn ? "true" : "false") + ",";
+  j += "\"cwUpperSideband\":" + String(cwUpperSideband ? "true" : "false") + ",";
+  j += "\"ecssOn\":" + String(ecssOn ? "true" : "false") + ",";
+  j += "\"deEmphasisEurope\":" + String(deEmphasisEurope ? "true" : "false") + ",";
+  j += "\"calUSB\":" + String(calUSB) + ",";
+  j += "\"calLSB\":" + String(calLSB);
   j += "}";
   return j;
 }
@@ -1752,12 +2563,73 @@ void webHandleSettingsSet() {
     else if (k == "scanWaterfallOn") scanWaterfallOn = bv;
     else if (k == "scanStopOnSignal") scanStopOnSignal = bv;
     else if (k == "ScanMarkSNR") { int sv = v.toInt(); if (sv >= 1 and sv <= 20) ScanMarkSNR = sv; }
+    else if (k == "scanStopSeconds") { int sv = v.toInt(); if (sv >= 1 and sv <= 10) scanStopSeconds = sv; }
     else if (k == "screenV") screenV = bv;
     else if (k == "VHFon") VHFon = bv;
     else if (k == "seekAccuracy") seekAccuracy = bv;
     else if (k == "closeCallOn") closeCallOn = bv;
+    else if (k == "cwUpperSideband") { cwUpperSideband = bv; if (currentMode == CW) BandSet(); }
+    else if (k == "ecssOn") { ecssOn = bv; if (currentMode == LSB or currentMode == USB) BandSet(); }
+    else if (k == "deEmphasisEurope") { deEmphasisEurope = bv; if (currentMode == FM) BandSet(); }
+    else if (k == "calUSB") { int cv = v.toInt(); if (cv >= -16000 and cv <= 16000) { calUSB = cv; if (currentMode == USB) BandSet(); } }
+    else if (k == "calLSB") { int cv = v.toInt(); if (cv >= -16000 and cv <= 16000) { calLSB = cv; if (currentMode == LSB) BandSet(); } }
   }
   webServer.send(200, "application/json", webJsonSettings());
+}
+
+struct CBChannel {
+  const char* id;
+  uint16_t freqKHz;
+  uint8_t mode;
+};
+
+const CBChannel cbChannelTable[] = {
+  {"1",   26965, AM}, {"2",   26975, AM}, {"3",   26985, AM}, {"3a",  26995, AM},
+  {"4",   27005, AM}, {"5",   27015, AM}, {"6",   27025, AM}, {"7",   27035, AM}, {"7a",  27045, AM},
+  {"8",   27055, AM}, {"9",   27065, AM}, {"10",  27075, AM}, {"11",  27085, AM}, {"11a", 27080, USB}, {"11b", 27095, AM},
+  {"12",  27105, AM}, {"13",  27115, AM}, {"14",  27125, AM}, {"15",  27135, AM}, {"15a", 27145, AM},
+  {"16",  27155, AM}, {"17",  27165, AM}, {"18",  27175, AM}, {"19",  27185, AM}, {"19a", 27180, AM}, {"19b", 27195, AM},
+  {"20",  27205, AM}, {"21",  27215, AM}, {"22",  27225, AM}, {"23",  27255, AM}, {"24",  27235, AM}, {"25",  27245, AM},
+  {"26",  27265, AM}, {"27",  27275, AM}, {"28",  27285, AM}, {"29",  27295, AM}, {"30",  27305, AM},
+  {"31",  27315, AM}, {"32",  27325, AM}, {"33",  27335, AM}, {"34",  27345, AM}, {"35",  27355, AM},
+  {"36",  27365, AM}, {"37",  27375, AM}, {"38",  27385, AM}, {"39",  27395, AM}, {"40",  27405, AM}
+};
+const uint8_t cbChannelCount = sizeof(cbChannelTable) / sizeof(cbChannelTable[0]);
+
+int findCBChannel(String id) {
+  for (uint8_t i = 0; i < cbChannelCount; i++) {
+    if (id.equalsIgnoreCase(cbChannelTable[i].id)) return i;
+  }
+  return -1;
+}
+
+void webHandleCB() {
+  if (webServer.hasArg("ch")) {
+    int idx = findCBChannel(webServer.arg("ch"));
+    if (idx >= 0) {
+      uint16_t freq = cbChannelTable[idx].freqKHz;
+      uint8_t targetMode = cbChannelTable[idx].mode;
+      int targetBand = -1;
+      for (int i = 0; i <= lastBand; i++) {
+        if (freq >= band[i].minimumFreq and freq <= band[i].maximumFreq and band[i].bandType != FM_BAND_TYPE) {
+          targetBand = i;
+          break;
+        }
+      }
+      if (targetBand >= 0) {
+        if (bandIdx != targetBand or currentMode != targetMode) {
+          bandIdx = targetBand;
+          currentMode = targetMode;
+          BandSet();
+        }
+        si4735.setFrequency(freq);
+        band[bandIdx].currentFreq = freq;
+        currentFrequency = si4735.getFrequency();
+        FreqDispl();
+      }
+    }
+  }
+  webServer.send(200, "application/json", webJsonStatus());
 }
 
 void webHandleMeterCycle() {
@@ -1765,16 +2637,15 @@ void webHandleMeterCycle() {
   webServer.send(200, "application/json", webJsonStatus());
 }
 
-void webHandleConfigExport() {
+String webHexEncode(const uint8_t* raw, size_t len) {
   static const char hexch[] = "0123456789abcdef";
   String hex = "";
-  uint8_t* raw = (uint8_t*)&storage;
-  for (size_t i = 0; i < sizeof(StoreStruct); i++) {
+  hex.reserve(len * 2);
+  for (size_t i = 0; i < len; i++) {
     hex += hexch[(raw[i] >> 4) & 0xF];
     hex += hexch[raw[i] & 0xF];
   }
-  webServer.sendHeader("Content-Disposition", "attachment; filename=ats25x2_config.txt");
-  webServer.send(200, "text/plain", hex);
+  return hex;
 }
 
 uint8_t webHexNibble(char c) {
@@ -1784,19 +2655,198 @@ uint8_t webHexNibble(char c) {
   return 0;
 }
 
+bool webHexDecode(uint8_t* raw, const String& hex, size_t len) {
+  if (hex.length() != len * 2) return false;
+  for (size_t i = 0; i < len; i++) {
+    raw[i] = (webHexNibble(hex[i * 2]) << 4) | webHexNibble(hex[i * 2 + 1]);
+  }
+  return true;
+}
+
+void webHandleConfigExport() {
+  String hex = webHexEncode((uint8_t*)&storage, sizeof(StoreStruct));
+  String txt = String("ATS25X2_CONFIG_V1 FW:") + FW_VERSION_STR + "\n" + hex + "\n";
+  webServer.sendHeader("Content-Disposition", "attachment; filename=ats25x2_config.txt");
+  webServer.send(200, "text/plain", txt);
+}
+
 void webHandleConfigImport() {
   String body = webServer.arg("plain");
   body.trim();
-  if (body.length() == sizeof(StoreStruct) * 2) {
-    uint8_t* raw = (uint8_t*)&storage;
-    for (size_t i = 0; i < sizeof(StoreStruct); i++) {
-      raw[i] = (webHexNibble(body[i * 2]) << 4) | webHexNibble(body[i * 2 + 1]);
-    }
+  String fwTag = "";
+  int nl = body.indexOf('\n');
+  String firstLine = (nl >= 0) ? body.substring(0, nl) : body;
+  if (firstLine.startsWith("ATS25X2_CONFIG_V1")) {
+    int fwIdx = firstLine.indexOf("FW:");
+    if (fwIdx >= 0) fwTag = firstLine.substring(fwIdx + 3);
+    body = (nl >= 0) ? body.substring(nl + 1) : "";
+    body.trim();
+  }
+  if (webHexDecode((uint8_t*)&storage, body, sizeof(StoreStruct))) {
     saveConfig();
-    webServer.send(200, "text/plain", "OK");
+    if (fwTag.length() > 0 and fwTag != FW_VERSION_STR) {
+      webServer.send(200, "text/plain", "OK (uwaga: plik zapisany przez inna wersje firmware: " + fwTag + ", biezaca: " + FW_VERSION_STR + ")");
+    } else {
+      webServer.send(200, "text/plain", "OK");
+    }
   } else {
     webServer.send(400, "text/plain", "Zla dlugosc danych - plik nie pasuje do tej wersji firmware");
   }
+}
+
+void webHandleFullBackupExport() {
+  String txt = String("ATS25X2_BACKUP_V1 FW:") + FW_VERSION_STR + "\n";
+  txt += "[CONFIG]\n";
+  txt += webHexEncode((uint8_t*)&storage, sizeof(StoreStruct)) + "\n";
+  txt += "[MEMORY]\n";
+  txt += webHexEncode((uint8_t*)&MemoBank, sizeof(MemoBank)) + "\n";
+  txt += "[SKIPLIST]\n";
+  for (int i = 0; i < skipListCount; i++) txt += String(skipList[i]) + "\n";
+  txt += "[END]\n";
+  webServer.sendHeader("Content-Disposition", "attachment; filename=ats25x2_full_backup.txt");
+  webServer.send(200, "text/plain", txt);
+}
+
+void webHandleFullBackupImport() {
+  String body = webServer.arg("plain");
+  int configStart = body.indexOf("[CONFIG]");
+  int memStart = body.indexOf("[MEMORY]");
+  int skipStart = body.indexOf("[SKIPLIST]");
+  int endMarker = body.lastIndexOf("[END]");
+  if (configStart < 0 or memStart < 0 or skipStart < 0 or endMarker < 0 or
+      memStart < configStart or skipStart < memStart or endMarker < skipStart) {
+    webServer.send(400, "text/plain", "Nieprawidlowy plik backupu");
+    return;
+  }
+  String configHex = body.substring(configStart + 8, memStart); configHex.trim();
+  String memHex = body.substring(memStart + 8, skipStart); memHex.trim();
+  String skipTxt = body.substring(skipStart + 10, endMarker); skipTxt.trim();
+
+  String header = body.substring(0, configStart);
+  String fwTag = "";
+  int fwIdx = header.indexOf("FW:");
+  if (fwIdx >= 0) {
+    int fwEnd = header.indexOf('\n', fwIdx);
+    fwTag = header.substring(fwIdx + 3, fwEnd >= 0 ? fwEnd : header.length());
+    fwTag.trim();
+  }
+
+  StoreStruct newStorage;
+  MemoryBank newMemoBank[lastMemoBank + 1];
+  if (!webHexDecode((uint8_t*)&newStorage, configHex, sizeof(StoreStruct)) or
+      !webHexDecode((uint8_t*)&newMemoBank, memHex, sizeof(MemoBank))) {
+    webServer.send(400, "text/plain", "Plik backupu nie pasuje do tej wersji firmware (config/pamiec)");
+    return;
+  }
+  storage = newStorage;
+  memcpy(MemoBank, newMemoBank, sizeof(MemoBank));
+
+  int newSkipCount = 0;
+  long newSkipList[SKIP_LIST_MAX];
+  int start = 0;
+  while (start < (int)skipTxt.length() and newSkipCount < SKIP_LIST_MAX) {
+    int nl = skipTxt.indexOf('\n', start);
+    if (nl < 0) nl = skipTxt.length();
+    String line = skipTxt.substring(start, nl);
+    line.trim();
+    if (line.length() > 0) {
+      long f = line.toInt();
+      if (f > 0) newSkipList[newSkipCount++] = f;
+    }
+    start = nl + 1;
+  }
+  skipListCount = newSkipCount;
+  for (int i = 0; i < newSkipCount; i++) skipList[i] = newSkipList[i];
+
+  saveConfig();
+  saveMemo();
+  if (fwTag.length() > 0 and fwTag != FW_VERSION_STR) {
+    webServer.send(200, "text/plain", "OK (uwaga: backup zapisany przez inna wersje firmware: " + fwTag + ", biezaca: " + FW_VERSION_STR + ")");
+  } else {
+    webServer.send(200, "text/plain", "OK");
+  }
+}
+
+struct KnownFreq {
+  uint16_t freq;
+  uint8_t mode;
+  const char* label;
+  const char* category;
+};
+
+const KnownFreq knownFreqs[] = {
+  {  2500, 3, "WWV/WWVH 2.5 MHz",   "Sygnaly czasu" },
+  {  5000, 3, "WWV/WWVH 5 MHz",     "Sygnaly czasu" },
+  { 10000, 3, "WWV/WWVH 10 MHz",    "Sygnaly czasu" },
+  { 15000, 3, "WWV/WWVH 15 MHz",    "Sygnaly czasu" },
+  { 20000, 3, "WWV 20 MHz",         "Sygnaly czasu" },
+  {  3330, 2, "CHU Kanada 3.33 MHz","Sygnaly czasu" },
+  {  7850, 2, "CHU Kanada 7.85 MHz","Sygnaly czasu" },
+  { 14670, 2, "CHU Kanada 14.67 MHz","Sygnaly czasu" },
+  {  2182, 2, "Morskie wywolawcze/ratunkowe","Lacznosc morska" },
+  {  4125, 2, "Morskie wywolawcze",  "Lacznosc morska" },
+  {  6215, 2, "Morskie wywolawcze",  "Lacznosc morska" },
+  {  8291, 2, "Morskie wywolawcze",  "Lacznosc morska" },
+  { 12290, 2, "Morskie wywolawcze",  "Lacznosc morska" },
+  { 16420, 2, "Morskie wywolawcze",  "Lacznosc morska" },
+  { 27065, 3, "CB kanal 9 (ratunkowy)","CB Radio" },
+  { 27185, 3, "CB kanal 19",         "CB Radio" },
+  {  3560, 4, "80m CW/QRP",          "Pasma amatorskie" },
+  {  3850, 1, "80m SSB",             "Pasma amatorskie" },
+  {  7030, 4, "40m CW/QRP",          "Pasma amatorskie" },
+  {  7150, 1, "40m SSB",             "Pasma amatorskie" },
+  { 10120, 4, "30m CW",              "Pasma amatorskie" },
+  { 14060, 4, "20m CW/QRP",          "Pasma amatorskie" },
+  { 14300, 2, "20m siec Maritime Mobile","Pasma amatorskie" },
+  { 18086, 4, "17m CW/QRP",          "Pasma amatorskie" },
+  { 18130, 2, "17m SSB",             "Pasma amatorskie" },
+  { 21060, 4, "15m CW/QRP",          "Pasma amatorskie" },
+  { 21300, 2, "15m SSB",             "Pasma amatorskie" },
+  { 24906, 4, "12m CW/QRP",          "Pasma amatorskie" },
+  { 24950, 2, "12m SSB",             "Pasma amatorskie" },
+  { 28060, 4, "10m CW/QRP",          "Pasma amatorskie" },
+  { 28400, 2, "10m SSB",             "Pasma amatorskie" },
+};
+const int knownFreqsCount = sizeof(knownFreqs) / sizeof(KnownFreq);
+
+void webHandleKnownFreq() {
+  const char* modeNames[] = {"FM", "LSB", "USB", "AM", "CW"};
+  String j = "[";
+  for (int i = 0; i < knownFreqsCount; i++) {
+    if (i) j += ",";
+    j += "{\"freq\":" + String(knownFreqs[i].freq) + ",\"mode\":\"" + String(modeNames[knownFreqs[i].mode]) +
+         "\",\"label\":\"" + webJsonEscape(String(knownFreqs[i].label)) + "\",\"category\":\"" + webJsonEscape(String(knownFreqs[i].category)) + "\"}";
+  }
+  j += "]";
+  webServer.send(200, "application/json", j);
+}
+
+void webHandleKnownFreqTune() {
+  if (webServer.hasArg("freq")) {
+    long f = webServer.arg("freq").toInt();
+    int newBand = -1;
+    for (int i = 0; i <= lastBand; i++) {
+      if (f >= band[i].minimumFreq and f <= band[i].maximumFreq) { newBand = i; break; }
+    }
+    if (newBand >= 0) {
+      if (newBand != bandIdx) {
+        bandIdx = newBand;
+        BandSet();
+      }
+      if (webServer.hasArg("mode")) {
+        int m = webServer.arg("mode").toInt();
+        if (m >= 0 and m <= 4 and m != currentMode and bandIdx != 0) {
+          currentMode = m;
+          BandSet();
+        }
+      }
+      si4735.setFrequency(f);
+      currentFrequency = si4735.getFrequency();
+      band[bandIdx].currentFreq = f;
+      FreqDispl();
+    }
+  }
+  webServer.send(200, "application/json", webJsonStatus());
 }
 
 void webHandleSkipList() {
@@ -1874,30 +2924,47 @@ void webHandleDiscoveryExport() {
   webServer.send(200, "text/plain", txt);
 }
 
+void webHandleManifest() {
+  String m = R"MANIFESTPAGE({"name":"ATS25X2 Panel","short_name":"ATS25X2","start_url":"/","display":"standalone","background_color":"#050505","theme_color":"#050505","icons":[{"src":"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='16' fill='rgb(10,10,10)'/%3E%3Ccircle cx='50' cy='62' r='30' fill='none' stroke='rgb(255,174,0)' stroke-width='6'/%3E%3Cline x1='50' y1='62' x2='50' y2='14' stroke='rgb(255,174,0)' stroke-width='6' stroke-linecap='round'/%3E%3Ccircle cx='50' cy='62' r='6' fill='rgb(255,174,0)'/%3E%3C/svg%3E","sizes":"any","type":"image/svg+xml"}]})MANIFESTPAGE";
+  webServer.send(200, "application/manifest+json", m);
+}
+
 void webHandleRoot() {
   String html = R"HTMLPAGE(<!DOCTYPE html><html><head><meta charset='utf-8'>
 <meta name='viewport' content='width=device-width,initial-scale=1'>
+<link rel='manifest' href='/manifest.json'>
+<meta name='theme-color' content='#050505'>
 <title>ATS25X2 - Panel sterowania</title>
 <style>
 :root{--amber:#ffae00;--teal:#29c6de;--green:#39e66a;--red:#e62829;--text:#ddd;--dim:#888}
 *{box-sizing:border-box}
 body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#050505;color:var(--text);margin:0;padding:10px}
-.rig{max-width:900px;margin:0 auto;background:linear-gradient(180deg,#3a3a3c,#1c1c1e 6%,#232325 94%,#38383a);
+.rig{max-width:960px;margin:0 auto;background:linear-gradient(180deg,#3a3a3c,#1c1c1e 6%,#232325 94%,#38383a);
   border-radius:14px;padding:10px;box-shadow:0 8px 24px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.08);border:1px solid #000}
 .brand{display:flex;justify-content:space-between;align-items:baseline;padding:2px 8px 8px;color:#aaa;font-size:.7em;letter-spacing:2px;text-transform:uppercase}
 .brand b{color:var(--amber);letter-spacing:1px}
+.brand .right{display:flex;gap:10px;align-items:baseline}
+.connDot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:5px;vertical-align:middle}
+.connDot.bad{background:var(--red)}
+
+.offlineBanner{display:none;background:#3a0d0d;border:1px solid var(--red);color:#ffb3b3;border-radius:6px;padding:6px 10px;margin-bottom:8px;font-size:.75em;text-align:center}
 
 .topbar{display:flex;gap:14px;flex-wrap:wrap;background:#0a0a0a;border:1px solid #000;border-radius:6px;padding:6px 12px;margin-bottom:8px;font-size:.72em;color:var(--teal);font-family:monospace}
 .topbar span b{color:#666;font-weight:normal;margin-right:3px}
 
 .mainGrid{display:flex;gap:10px}
-.sidebar{display:flex;flex-direction:column;gap:5px;width:78px;flex-shrink:0}
+.sidebar{display:flex;flex-direction:column;gap:5px;width:96px;flex-shrink:0}
 .sideBtn{background:linear-gradient(180deg,#3d3d3f,#252527);color:#bbb;border:1px solid #111;border-radius:5px;padding:8px 3px;font-size:.68em;cursor:pointer;text-align:center;line-height:1.25;box-shadow:0 1px 0 rgba(255,255,255,.06) inset}
 .sideBtn .l1{display:block;color:#eee;font-weight:bold}
 .sideBtn.on{background:linear-gradient(180deg,var(--amber),#b37800);color:#000}
 .sideBtn.on .l1{color:#000}
 .sideBtn.red.on{background:linear-gradient(180deg,var(--red),#8f1414);color:#fff}
 .sideBtn.red.on .l1{color:#fff}
+.navDivider{height:1px;background:#111;margin:4px 2px}
+.navBtn{text-align:left;font-size:.72em;padding:8px 8px;position:relative}
+.navBtn .badge{position:absolute;right:6px;top:6px;width:7px;height:7px;border-radius:50%;background:var(--amber);display:none}
+.navBtn.armed .badge{display:block}
+.navBtn.armed.hot .badge{background:var(--red)}
 
 .content{flex:1;min-width:0}
 .metersRow{display:flex;gap:8px;background:#0a0a0a;border:1px solid #000;border-radius:6px;padding:6px;margin-bottom:8px}
@@ -1928,9 +2995,10 @@ body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#050505;col
 .quickRow button{background:linear-gradient(180deg,#3d3d3f,#252527);color:#ccc;border:1px solid #111;border-radius:5px;padding:6px 4px;font-size:.72em;cursor:pointer;flex:1;min-width:44px}
 .quickRow button.on{background:linear-gradient(180deg,var(--amber),#b37800);color:#000;font-weight:bold}
 
-.section{margin-top:8px;background:linear-gradient(180deg,#2a2a2c,#202022);border:1px solid #000;border-radius:8px;padding:8px 10px 10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.05);display:none}
-.section.open{display:block}
+.tabPane{margin-top:8px}
+.section{margin-top:8px;background:linear-gradient(180deg,#2a2a2c,#202022);border:1px solid #000;border-radius:8px;padding:8px 10px 10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
 .section h2{font-size:.66em;color:#999;text-transform:uppercase;letter-spacing:2px;margin:0 0 6px;border-bottom:1px solid #151515;padding-bottom:5px}
+.section p.hint{font-size:.72em;color:var(--dim);margin:0 0 8px}
 .row{display:flex;gap:8px;align-items:center;margin-bottom:6px}
 .row:last-child{margin-bottom:0}
 .row label{font-size:.75em;color:var(--dim);min-width:48px}
@@ -1940,9 +3008,16 @@ input[type=range]{flex:1;accent-color:var(--amber)}
 .memitem{display:flex;justify-content:space-between;padding:6px 3px;border-bottom:1px solid #1a1a1a;cursor:pointer;font-size:.8em}
 .memitem:hover{background:#1e1e1e}
 .memitem .n{color:#ddd}
-.memitem .f{color:var(--dim);font-family:monospace}
+.memitem .f{color:var(--dim);font-family:monospace;display:flex;align-items:center;gap:6px}
+.memitem .tag{font-size:.85em;color:var(--teal);border:1px solid #223;border-radius:4px;padding:0 4px;margin-left:4px;cursor:pointer}
+.memitem .tag:empty::before{content:'+';color:var(--dim)}
+.memAction{cursor:pointer;color:#555;padding:0 2px}
+.memAction:hover{color:var(--teal)}
+.memAction.del:hover{color:var(--red)}
 .settingsRow{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #1a1a1a;font-size:.8em}
 .settingsRow:last-child{border-bottom:none}
+.setGroupTitle{color:var(--teal);font-size:.68em;letter-spacing:1px;text-transform:uppercase;margin:10px 0 3px}
+.setGroupTitle:first-child{margin-top:0}
 .toggle{width:38px;height:20px;background:#151515;border:1px solid #333;border-radius:11px;position:relative;cursor:pointer;flex-shrink:0}
 .toggle.on{background:linear-gradient(180deg,var(--green),#1c8f3d);border-color:#000}
 .toggle .dot{width:14px;height:14px;background:#ccc;border-radius:50%;position:absolute;top:2px;left:2px;transition:left .2s}
@@ -1951,12 +3026,13 @@ input[type=range]{flex:1;accent-color:var(--amber)}
 .rigBtn.wide{width:100%}
 .btnGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
 .btnGrid button.on{background:linear-gradient(180deg,var(--amber),#b37800);color:#000;font-weight:bold}
+.prioRow{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #1a1a1a;font-size:.82em}
+.prioRow .f{font-family:monospace;color:var(--amber)}
 
 #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--amber);color:#000;padding:8px 16px;border-radius:6px;opacity:0;transition:opacity .3s;pointer-events:none;font-size:.85em;font-weight:bold}
-@media(max-width:520px){.mainGrid{flex-direction:column}.sidebar{width:100%;flex-direction:row;flex-wrap:wrap}.sideBtn{flex:1;min-width:70px}}
+@media(max-width:560px){.mainGrid{flex-direction:column}.sidebar{width:100%;flex-direction:row;flex-wrap:wrap}.sideBtn{flex:1;min-width:70px}.navBtn{text-align:center}}
 
-/* ZMIANA: tryb kompaktowy - mniejsze przyciski/odstepy, wiecej widocznych informacji na raz */
-body.compact .rig{max-width:1100px}
+body.compact .rig{max-width:1160px}
 body.compact .section{padding:5px 7px 6px;margin-top:5px}
 body.compact .section h2{font-size:.6em;margin-bottom:4px;padding-bottom:3px}
 body.compact .rigBtn{padding:4px;font-size:.68em}
@@ -1965,13 +3041,20 @@ body.compact .row{margin-bottom:4px;gap:5px}
 body.compact .memitem{padding:3px 2px;font-size:.72em}
 body.compact .gaugeSvg{height:52px}
 body.compact .vfoFreq{font-size:1.05em}
-body.compact .lcd{padding:7px 9px}
 body.compact .mainGrid{gap:6px}
-body.compact .sidebar{width:64px;gap:3px}
+body.compact .sidebar{width:80px;gap:3px}
 </style></head><body>
 
 <div class='rig'>
-  <div class='brand'><b>ATS25X2</b> <span>PANEL STEROWANIA</span> <span onclick='toggleCompact()' style='cursor:pointer;color:var(--teal)' id='compactBtn'>[kompakt]</span></div>
+  <div class='brand'>
+    <span><b>ATS25X2</b> PANEL STEROWANIA</span>
+    <span class='right'>
+      <span><span class='connDot' id='connDot'></span><span id='connLbl'>online</span></span>
+      <span onclick='toggleCompact()' style='cursor:pointer;color:var(--teal)' id='compactBtn'>[kompakt]</span>
+    </span>
+  </div>
+
+  <div id='offlineBanner'>Brak połączenia z urządzeniem - dane mogą być nieaktualne</div>
 
   <div class='topbar'>
     <span><b>PASMO</b><span id='tbBand'>-</span></span>
@@ -1985,163 +3068,255 @@ body.compact .sidebar{width:64px;gap:3px}
     <div class='sidebar'>
       <button class='sideBtn' id='btnMute' onclick='toggleMute()'><span class='l1'>MUTE</span>audio</button>
       <button class='sideBtn' id='btnLock' onclick='toggleLock()'><span class='l1'>LOCK</span>ekran</button>
-      <button class='sideBtn' id='btnAgc' onclick='cycleAgc()'><span class='l1'>AGC</span>-</button>
       <button class='sideBtn' onclick='vfoSwap()'><span class='l1'>A/B</span>VFO</button>
-      <button class='sideBtn' onclick='prioSave()'><span class='l1'>PRIO</span>zapisz</button>
-      <button class='sideBtn' id='btnPrio' onclick='prioToggle()'><span class='l1'>PRIO</span>wl/wyl</button>
       <button class='sideBtn' id='btnSw' onclick='swToggle()'><span class='l1'>STOP.</span>start</button>
-      <button class='sideBtn' id='btnMenu' onclick='toggleSection("menuSec")'><span class='l1'>MENU</span>opcje</button>
+      <div class='navDivider'></div>
+      <button class='sideBtn navBtn' data-tab='rx' onclick="showTab('rx')"><span class='l1'>Odbiornik</span></button>
+      <button class='sideBtn navBtn' data-tab='prio' onclick="showTab('prio')" id='btnPrio'><span class='l1'>Priorytet</span><span class='badge'></span></button>
+      <button class='sideBtn navBtn' data-tab='mem' onclick="showTab('mem')"><span class='l1'>Pamięć</span></button>
+      <button class='sideBtn navBtn' data-tab='scan' onclick="showTab('scan')" id='navScan'><span class='l1'>Skaner</span><span class='badge'></span></button>
+      <button class='sideBtn navBtn' data-tab='known' onclick="showTab('known')"><span class='l1'>Częstotliwości</span></button>
+      <button class='sideBtn navBtn' data-tab='net' onclick="showTab('net')"><span class='l1'>Sieć/Backup</span></button>
+      <button class='sideBtn navBtn' data-tab='set' onclick="showTab('set')"><span class='l1'>Ustawienia</span></button>
     </div>
 
     <div class='content'>
-      <div class='metersRow'>
-        <div class='gaugeBox'>
-          <svg class='gaugeSvg' viewBox='0 0 200 110'>
-            <path d='M14,100 A86,86 0 0,1 186,100' fill='none' stroke='#222' stroke-width='10'/>
-            <path d='M14,100 A86,86 0 0,1 100,14' fill='none' stroke='#264d2e' stroke-width='10'/>
-            <path d='M100,14 A86,86 0 0,1 186,100' fill='none' stroke='#4d2020' stroke-width='10'/>
-            <line id='rssiNeedle' x1='100' y1='100' x2='100' y2='24' stroke='#e62829' stroke-width='3' style='transform-origin:100px 100px;transition:transform .3s'/>
-            <circle cx='100' cy='100' r='6' fill='#ccc'/>
-          </svg>
-          <div class='lbl'>SIGNAL</div>
-          <div class='rd' id='sigVal'>S0</div>
+
+      <div class='tabPane' id='tab-rx'>
+        <div class='metersRow'>
+          <div class='gaugeBox'>
+            <svg class='gaugeSvg' viewBox='0 0 200 110'>
+              <path d='M14,100 A86,86 0 0,1 186,100' fill='none' stroke='#222' stroke-width='10'/>
+              <path d='M14,100 A86,86 0 0,1 100,14' fill='none' stroke='#264d2e' stroke-width='10'/>
+              <path d='M100,14 A86,86 0 0,1 186,100' fill='none' stroke='#4d2020' stroke-width='10'/>
+              <line id='rssiNeedle' x1='100' y1='100' x2='100' y2='24' stroke='#e62829' stroke-width='3' style='transform-origin:100px 100px;transition:transform .3s'/>
+              <circle cx='100' cy='100' r='6' fill='#ccc'/>
+            </svg>
+            <div class='lbl'>SIGNAL</div>
+            <div class='rd' id='sigVal'>S0</div>
+          </div>
+          <div class='gaugeBox'>
+            <svg class='gaugeSvg' viewBox='0 0 200 110'>
+              <path d='M14,100 A86,86 0 0,1 186,100' fill='none' stroke='#222' stroke-width='10'/>
+              <line id='snrNeedle' x1='100' y1='100' x2='100' y2='24' stroke='#29c6de' stroke-width='3' style='transform-origin:100px 100px;transition:transform .3s'/>
+              <circle cx='100' cy='100' r='6' fill='#ccc'/>
+            </svg>
+            <div class='lbl'>SNR</div>
+            <div class='rd' id='snrVal'>0 dB</div>
+          </div>
         </div>
-        <div class='gaugeBox'>
-          <svg class='gaugeSvg' viewBox='0 0 200 110'>
-            <path d='M14,100 A86,86 0 0,1 186,100' fill='none' stroke='#222' stroke-width='10'/>
-            <line id='snrNeedle' x1='100' y1='100' x2='100' y2='24' stroke='#29c6de' stroke-width='3' style='transform-origin:100px 100px;transition:transform .3s'/>
-            <circle cx='100' cy='100' r='6' fill='#ccc'/>
-          </svg>
-          <div class='lbl'>SNR</div>
-          <div class='rd' id='snrVal'>0 dB</div>
+        <div class='row' style='margin-bottom:8px'>
+          <button class='rigBtn wide' onclick='meterCycle()'>PRZELACZ METER NA URZADZENIU</button>
+        </div>
+        <div class='freqEntry'>
+          <input type='text' id='freqInput' placeholder='wpisz czestotliwosc'>
+          <button onclick='setFreq()'>USTAW</button>
+        </div>
+
+        <div class='vfoRow'>
+          <div class='vfoBox' id='vfoABox'>
+            <div class='vfoTag'>VFO A</div>
+            <div class='vfoFreq' id='vfoAFreq'>---</div>
+          </div>
+          <button class='swapBtn' onclick='vfoSwap()'>&#8646;</button>
+          <div class='vfoBox' id='vfoBBox'>
+            <div class='vfoTag'>VFO B</div>
+            <div class='vfoFreq' id='vfoBFreq'>---</div>
+          </div>
+        </div>
+
+        <div class='rdsPanel' id='rdsPanel'>
+          <span id='rdsEmpty' class='empty'>RDS: brak danych</span>
+          <span id='rdsStationWrap' style='display:none'><span class='lbl'>Stacja</span><span id='rdsStation'></span></span>
+          <span id='rdsTextWrap' style='display:none'><span class='lbl'>RDS</span><span class='txt' id='rdsText'></span></span>
+          <span id='rdsPtyWrap' style='display:none'><span class='lbl'>Typ</span><span id='rdsPty'></span></span>
+          <span id='rdsPiWrap' style='display:none'><span class='lbl'>PI</span><span id='rdsPi'></span></span>
+        </div>
+
+        <div class='quickRow' id='bandRow'></div>
+        <div class='quickRow' id='modeRow'>
+          <button data-m='0' onclick='setModeBtn(0)'>FM</button>
+          <button data-m='1' onclick='setModeBtn(1)'>LSB</button>
+          <button data-m='2' onclick='setModeBtn(2)'>USB</button>
+          <button data-m='3' onclick='setModeBtn(3)'>AM</button>
+          <button data-m='4' onclick='setModeBtn(4)'>CW</button>
+        </div>
+
+        <div class='section'>
+          <h2>AF Gain / Squelch / Stoper</h2>
+          <div class='row'>
+            <label>VOL</label>
+            <input type='range' id='volSlider' min='0' max='63' oninput='setVolLive(this.value)' onchange='setVol(this.value)'>
+            <span class='val' id='volVal'>0</span>
+          </div>
+          <div class='row' id='agcLevelRow' style='display:none'>
+            <label>AGC LVL</label>
+            <input type='range' id='agcSlider' min='1' max='37' oninput='agcLevelLive(this.value)' onchange='setAgcLevel(this.value)'>
+            <span class='val' id='agcVal'>1</span>
+          </div>
+          <div class='row'>
+            <label>AGC</label>
+            <button class='rigBtn' id='btnAgc' onclick='cycleAgc()'>-</button>
+          </div>
+          <div class='row'>
+            <label>SQUELCH</label>
+            <input type='range' id='sqSlider' min='0' max='50' oninput='sqLevelLive(this.value)' onchange='setSqLevel(this.value)'>
+            <span class='val' id='sqVal'>0</span>
+            <button class='rigBtn' id='sqToggle' onclick='sqToggleOn()'>WYL</button>
+          </div>
+          <div class='row'>
+            <label style='display:flex;align-items:center;gap:5px;font-size:.8em;color:var(--dim);min-width:0'>
+              <input type='checkbox' id='sqUseRssi' onchange='sqSetMode()'> squelch wg RSSI (odznacz = SNR)
+            </label>
+          </div>
+          <div class='row'>
+            <label>STOPER</label>
+            <span class='val' id='swVal' style='flex:1;text-align:left'>00:00</span>
+            <button class='rigBtn' onclick='swReset()'>RESET</button>
+          </div>
         </div>
       </div>
-      <div class='row' style='margin-bottom:8px'>
-        <button class='rigBtn wide' onclick='meterCycle()'>PRZELACZ METER NA URZADZENIU</button>
-      </div>
 
-      <div class='freqEntry'>
-        <input type='text' id='freqInput' placeholder='wpisz czestotliwosc'>
-        <button onclick='setFreq()'>USTAW</button>
-      </div>
-
-      <div class='vfoRow'>
-        <div class='vfoBox' id='vfoABox'>
-          <div class='vfoTag'>VFO A</div>
-          <div class='vfoFreq' id='vfoAFreq'>---</div>
-        </div>
-        <button class='swapBtn' onclick='vfoSwap()'>&#8646;</button>
-        <div class='vfoBox' id='vfoBBox'>
-          <div class='vfoTag'>VFO B</div>
-          <div class='vfoFreq' id='vfoBFreq'>---</div>
+      <div class='tabPane' id='tab-prio' style='display:none'>
+        <div class='section'>
+          <h2>Priorytet / Dual-watch</h2>
+          <p class='hint'>Nasłuchuje w tle 1 lub 2 zapisanych częstotliwości, bez przerywania normalnego słuchania. Co ok. 8s urządzenie sprawdza, czy jest tam sygnał - jeśli tak, przełącza się tam automatycznie i wraca, gdy sygnał zniknie na dłużej.</p>
+          <div class='prioRow'><span>Kanał 1<br><span class='f' id='prio1Val'>brak</span></span><button class='rigBtn' onclick="prioSave('A')">Zapisz obecną</button></div>
+          <div class='prioRow'><span>Kanał 2<br><span class='f' id='prio2Val'>brak</span></span><button class='rigBtn' onclick="prioSave('B')">Zapisz obecną</button></div>
+          <div class='row' style='margin-top:10px'><button class='rigBtn wide' id='btnPrioToggle' onclick='prioToggle()'>WŁĄCZ / WYŁĄCZ NASŁUCH</button></div>
         </div>
       </div>
 
-      <div class='rdsPanel' id='rdsPanel'>
-        <span id='rdsEmpty' class='empty'>RDS: brak danych</span>
-        <span id='rdsStationWrap' style='display:none'><span class='lbl'>Stacja</span><span id='rdsStation'></span></span>
-        <span id='rdsTextWrap' style='display:none'><span class='lbl'>RDS</span><span class='txt' id='rdsText'></span></span>
+      <div class='tabPane' id='tab-mem' style='display:none'>
+        <div class='section'>
+          <h2>Pamięć stacji</h2>
+          <div class='row'>
+            <button class='rigBtn wide' onclick='addCurrentToMem()'>+ Zapisz obecną częstotliwość do pamięci</button>
+          </div>
+          <div class='row'>
+            <input type='text' id='memSearch' placeholder='szukaj po nazwie...' oninput='renderMemList()' style='background:#050505;color:#ddd;border:1px solid #222;border-radius:5px;padding:7px;flex:1'>
+          </div>
+          <div class='row'>
+            <select id='memSort' onchange='renderMemList()' style='background:#050505;color:#ddd;border:1px solid #222;border-radius:5px;padding:6px;flex:1'>
+              <option value='none'>Bez sortowania</option>
+              <option value='name'>Sortuj: nazwa</option>
+              <option value='freq'>Sortuj: czestotliwosc</option>
+              <option value='band'>Sortuj: pasmo</option>
+              <option value='country'>Sortuj: kraj</option>
+              <option value='language'>Sortuj: jezyk</option>
+            </select>
+            <button class='rigBtn' id='favFilterBtn' onclick='toggleFavFilter()'>&#9733; TYLKO ULUBIONE</button>
+          </div>
+          <div class='row'>
+            <select id='memCountryFilter' onchange='renderMemList()' style='background:#050505;color:#ddd;border:1px solid #222;border-radius:5px;padding:6px;flex:1'>
+              <option value=''>Wszystkie kraje</option>
+            </select>
+            <select id='memLangFilter' onchange='renderMemList()' style='background:#050505;color:#ddd;border:1px solid #222;border-radius:5px;padding:6px;flex:1'>
+              <option value=''>Wszystkie jezyki</option>
+            </select>
+          </div>
+          <div class='row'>
+            <label style='display:flex;align-items:center;gap:5px;font-size:.8em;color:var(--dim)'>
+              <input type='checkbox' id='memGroupBand' onchange='renderMemList()'> grupuj wg pasma
+            </label>
+          </div>
+          <div class='memlist' id='memList'>ladowanie...</div>
+          <div class='row' style='margin-top:6px;border-top:1px solid #1a1a1a;padding-top:8px'>
+            <button class='rigBtn wide' onclick='document.getElementById("memFile").click()'>Import masowy (.txt)</button>
+            <input type='file' id='memFile' accept='.txt' style='display:none' onchange='memImport(this.files[0])'>
+          </div>
+          <div class='row' style='font-size:.68em;color:var(--dim)'>Format: czestotliwosc;nazwa;pasmo;tryb (jedna stacja na linie), np. 7175;HAM RADIO;40M;LSB</div>
+          <div class='row' style='margin-top:6px;border-top:1px solid #1a1a1a;padding-top:8px'>
+            <button class='rigBtn wide' onclick='memExportCsv()'>Eksport CSV (SDR#)</button>
+            <button class='rigBtn wide' onclick='document.getElementById("memFileCsv").click()'>Import CSV (SDR#)</button>
+            <input type='file' id='memFileCsv' accept='.csv,.txt' style='display:none' onchange='memImportCsv(this.files[0])'>
+          </div>
+          <div class='row' style='font-size:.68em;color:var(--dim)'>Format CSV: Name,Frequency,Mode (czestotliwosc w Hz), np. HAM RADIO,7175000,LSB - do wymiany z innymi programami SDR</div>
+        </div>
       </div>
 
-      <div class='quickRow' id='bandRow'></div>
-      <div class='quickRow' id='modeRow'>
-        <button data-m='0' onclick='setModeBtn(0)'>FM</button>
-        <button data-m='1' onclick='setModeBtn(1)'>LSB</button>
-        <button data-m='2' onclick='setModeBtn(2)'>USB</button>
-        <button data-m='3' onclick='setModeBtn(3)'>AM</button>
-        <button data-m='4' onclick='setModeBtn(4)'>CW</button>
+      <div class='tabPane' id='tab-known' style='display:none'>
+        <div class='section'>
+          <h2>Znane częstotliwości</h2>
+          <p class='hint'>Stała baza wbudowana w firmware: sygnały czasu, łączność morska, CB, wywoławcze pasm amatorskich. Kliknij pozycję, aby przestroić urządzenie.</p>
+          <div class='memlist' id='knownList'>ladowanie...</div>
+        </div>
       </div>
-    </div>
-  </div>
 
-  <div class='section' id='scanSec'>
-    <h2>Skaner</h2>
-    <div class='row'><span style='flex:1'>Czestotliwosc skanera: <b class='val' id='scanFreqVal'>-</b> kHz</span></div>
-    <div class='row'><button class='rigBtn wide' onclick='scanToggle()' id='scanBtn'>PAUZA</button></div>
-  </div>
+      <div class='tabPane' id='tab-scan' style='display:none'>
+        <div class='section' id='scanSec' style='display:none'>
+          <h2>Skaner</h2>
+          <div class='row'><span style='flex:1'>Czestotliwosc skanera: <b class='val' id='scanFreqVal'>-</b> kHz</span></div>
+          <div class='row'><button class='rigBtn wide' onclick='scanToggle()' id='scanBtn'>PAUZA</button></div>
+        </div>
 
-  <div class='section' id='skipSec'>
-    <h2>Lista wykluczen (skip list)</h2>
-    <div class='row'>
-      <input type='text' id='skipInput' placeholder='czestotliwosc kHz' style='background:#050505;color:#ddd;border:1px solid #222;border-radius:5px;padding:7px;flex:1'>
-      <button class='rigBtn' onclick='skipAdd()'>DODAJ</button>
-    </div>
-    <div class='memlist' id='skipList'>ladowanie...</div>
-    <div class='row' style='margin-top:6px'>
-      <button class='rigBtn wide' onclick='skipExport()'>Pobierz .txt</button>
-      <button class='rigBtn wide' onclick='document.getElementById("skipFile").click()'>Wczytaj .txt</button>
-      <input type='file' id='skipFile' accept='.txt' style='display:none' onchange='skipImport(this.files[0])'>
-    </div>
-  </div>
+        <div class='section'>
+          <h2>Lista wykluczen (skip list)</h2>
+          <div class='row'>
+            <input type='text' id='skipInput' placeholder='czestotliwosc kHz' style='background:#050505;color:#ddd;border:1px solid #222;border-radius:5px;padding:7px;flex:1'>
+            <button class='rigBtn' onclick='skipAdd()'>DODAJ</button>
+          </div>
+          <div class='memlist' id='skipList'>ladowanie...</div>
+          <div class='row' style='margin-top:6px'>
+            <button class='rigBtn wide' onclick='skipExport()'>Pobierz .txt</button>
+            <button class='rigBtn wide' onclick='document.getElementById("skipFile").click()'>Wczytaj .txt</button>
+            <input type='file' id='skipFile' accept='.txt' style='display:none' onchange='skipImport(this.files[0])'>
+          </div>
+        </div>
 
-  <div class='section' id='discSec'>
-    <h2>Discovery - log wykrytych sygnalow</h2>
-    <div class='memlist' id='discList'>ladowanie...</div>
-    <div class='row' style='margin-top:6px'>
-      <button class='rigBtn wide' onclick='discExport()'>Pobierz .txt</button>
-      <button class='rigBtn wide' onclick='loadDiscovery()'>Odswiez</button>
-    </div>
-  </div>
+        <div class='section'>
+          <h2>Discovery - log wykrytych sygnalow</h2>
+          <div class='memlist' id='discList'>ladowanie...</div>
+          <div class='row' style='margin-top:6px'>
+            <button class='rigBtn wide' onclick='discExport()'>Pobierz .txt</button>
+            <button class='rigBtn wide' onclick='loadDiscovery()'>Odswiez</button>
+          </div>
+        </div>
 
-  <div class='section' id='audioSec'>
-    <h2>AF Gain</h2>
-    <div class='row'>
-      <label>VOL</label>
-      <input type='range' id='volSlider' min='0' max='63' oninput='setVolLive(this.value)' onchange='setVol(this.value)'>
-      <span class='val' id='volVal'>0</span>
-    </div>
-    <div class='row' id='agcLevelRow' style='display:none'>
-      <label>AGC LVL</label>
-      <input type='range' id='agcSlider' min='1' max='37' oninput='agcLevelLive(this.value)' onchange='setAgcLevel(this.value)'>
-      <span class='val' id='agcVal'>1</span>
-    </div>
-    <div class='row'>
-      <label>STOPER</label>
-      <span class='val' id='swVal' style='flex:1;text-align:left'>00:00</span>
-      <button class='rigBtn' onclick='swReset()'>RESET</button>
-    </div>
-  </div>
+        <div class='section'>
+          <h2>Kanaly CB (11m, standard CEPT)</h2>
+          <div class='btnGrid' id='cbGrid' style='grid-template-columns:repeat(8,1fr)'></div>
+        </div>
+      </div>
 
-  <div class='section' id='memSec'>
-    <h2>Pamiec stacji</h2>
-    <div class='row'>
-      <input type='text' id='memSearch' placeholder='szukaj po nazwie...' oninput='renderMemList()' style='background:#050505;color:#ddd;border:1px solid #222;border-radius:5px;padding:7px;flex:1'>
-    </div>
-    <div class='row'>
-      <select id='memSort' onchange='renderMemList()' style='background:#050505;color:#ddd;border:1px solid #222;border-radius:5px;padding:6px;flex:1'>
-        <option value='none'>Bez sortowania</option>
-        <option value='name'>Sortuj: nazwa</option>
-        <option value='freq'>Sortuj: czestotliwosc</option>
-        <option value='band'>Sortuj: pasmo</option>
-      </select>
-      <button class='rigBtn' id='favFilterBtn' onclick='toggleFavFilter()'>&#9733; TYLKO ULUBIONE</button>
-    </div>
-    <div class='row'>
-      <label style='display:flex;align-items:center;gap:5px;font-size:.8em;color:var(--dim)'>
-        <input type='checkbox' id='memGroupBand' onchange='renderMemList()'> grupuj wg pasma
-      </label>
-    </div>
-    <div class='memlist' id='memList'>ladowanie...</div>
-    <div class='row' style='margin-top:6px;border-top:1px solid #1a1a1a;padding-top:8px'>
-      <button class='rigBtn wide' onclick='document.getElementById("memFile").click()'>Import masowy (.txt)</button>
-      <input type='file' id='memFile' accept='.txt' style='display:none' onchange='memImport(this.files[0])'>
-    </div>
-    <div class='row' style='font-size:.68em;color:var(--dim)'>Format: czestotliwosc;nazwa;pasmo;tryb (jedna stacja na linie), np. 7175;HAM RADIO;40M;LSB</div>
-  </div>
+      <div class='tabPane' id='tab-net' style='display:none'>
+        <div class='section'>
+          <h2>Kalibracja BFO</h2>
+          <div class='row'>
+            <label style='min-width:70px'>Kal. USB (Hz)</label>
+            <input type='number' id='calUSBInput' style='background:#050505;color:#ddd;border:1px solid #222;border-radius:5px;padding:6px;width:90px'>
+            <label style='min-width:70px'>Kal. LSB (Hz)</label>
+            <input type='number' id='calLSBInput' style='background:#050505;color:#ddd;border:1px solid #222;border-radius:5px;padding:6px;width:90px'>
+            <button class='rigBtn' onclick='saveCal()'>Zapisz</button>
+          </div>
+        </div>
+        <div class='section'>
+          <h2>Pełny backup</h2>
+          <p class='hint'>Konfiguracja + pamięć stacji + skip-lista, razem, w jednym pliku.</p>
+          <div class='row'>
+            <button class='rigBtn wide' onclick='fullBackupExport()'>Pobierz pełny backup (.txt)</button>
+            <button class='rigBtn wide' onclick='document.getElementById("backupFile").click()'>Przywróć pełny backup</button>
+            <input type='file' id='backupFile' accept='.txt' style='display:none' onchange='fullBackupImport(this.files[0])'>
+          </div>
+        </div>
+        <div class='section'>
+          <h2>Sama konfiguracja</h2>
+          <p class='hint'>Bez pamięci stacji.</p>
+          <div class='row'>
+            <button class='rigBtn wide' onclick='configExport()'>Pobierz konfiguracje (.txt)</button>
+            <button class='rigBtn wide' onclick='document.getElementById("cfgFile").click()'>Wczytaj konfiguracje</button>
+            <input type='file' id='cfgFile' accept='.txt' style='display:none' onchange='configImport(this.files[0])'>
+          </div>
+        </div>
+      </div>
 
-  <div class='section' id='menuSec'>
-    <h2>Menu opcji</h2>
-    <div class='row'>
-      <button class='rigBtn' onclick='toggleSection("audioSec")'>Audio/Stoper</button>
-      <button class='rigBtn' onclick='toggleSection("memSec")'>Pamiec</button>
-      <button class='rigBtn' onclick='toggleSection("skipSec")'>Skip list</button>
-      <button class='rigBtn' onclick='toggleSection("discSec"); loadDiscovery()'>Discovery</button>
-    </div>
-    <div id='settingsList' style='margin-top:6px'>ladowanie...</div>
-    <div class='row' style='margin-top:8px;border-top:1px solid #1a1a1a;padding-top:8px'>
-      <button class='rigBtn wide' onclick='configExport()'>Pobierz konfiguracje (.txt)</button>
-      <button class='rigBtn wide' onclick='document.getElementById("cfgFile").click()'>Wczytaj konfiguracje</button>
-      <input type='file' id='cfgFile' accept='.txt' style='display:none' onchange='configImport(this.files[0])'>
+      <div class='tabPane' id='tab-set' style='display:none'>
+        <div class='section'>
+          <h2>Ustawienia</h2>
+          <div id='settingsList'>ladowanie...</div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -2149,27 +3324,49 @@ body.compact .sidebar{width:64px;gap:3px}
 <div id='toast'></div>
 
 <script>
-let lastVolSet = -1, lastAgcSet = -1, agcModeCur = 1;
-let lastRdsText = '', lastRdsStation = ''; 
+let lastVolSet = -1, lastAgcSet = -1, agcModeCur = 1, lastSqSet = -1;
+let lastRdsText = '', lastRdsStation = '', lastRdsPty = '', lastRdsPi = '';
+let lastOkPoll = Date.now();
+
 async function api(path, params) {
   let url = path;
   if (params) url += '?' + new URLSearchParams(params).toString();
-  const r = await fetch(url);
-  const j = await r.json();
-  render(j);
-  return j;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 4000);
+  try {
+    const r = await fetch(url, {signal: ctrl.signal});
+    const j = await r.json();
+    render(j);
+    return j;
+  } finally {
+    clearTimeout(t);
+  }
 }
 function toast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.style.opacity = 1;
   setTimeout(()=>t.style.opacity=0, 1200);
 }
-function toggleSection(id) {
-  document.querySelectorAll('.section').forEach(s => { if (s.id !== id) s.classList.remove('open'); });
-  document.getElementById(id).classList.toggle('open');
+
+function showTab(tab){
+  document.querySelectorAll('.tabPane').forEach(p => p.style.display = (p.id === 'tab-'+tab) ? 'block' : 'none');
+  document.querySelectorAll('.navBtn').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  try { localStorage.setItem('ats25x2_tab', tab); } catch(e){}
+  if (tab === 'mem') loadMemory();
+  if (tab === 'scan') loadDiscovery();
 }
+
 function needleAngle(pct) { return -90 + Math.min(1, Math.max(0, pct)) * 180; }
+
+function setConnState(ok){
+  document.getElementById('connDot').className = ok ? 'connDot' : 'connDot bad';
+  document.getElementById('connLbl').textContent = ok ? 'online' : 'brak połączenia';
+  document.getElementById('offlineBanner').style.display = ok ? 'none' : 'block';
+}
+
+let lastStatusJson = null;
 function render(j) {
+  lastStatusJson = j;
   document.getElementById('tbBand').textContent = j.band;
   document.getElementById('tbMode').textContent = j.mode;
   document.getElementById('tbVfo').textContent = j.vfo;
@@ -2196,14 +3393,30 @@ function render(j) {
   document.querySelectorAll('#bandRow button').forEach(b => b.className = (parseInt(b.dataset.idx)===j.bandIdx)?'on':'');
 
   agcModeCur = j.agcMode;
-  document.getElementById('btnAgc').className = j.agcMode ? 'sideBtn on' : 'sideBtn';
+  document.getElementById('btnAgc').className = j.agcMode ? 'rigBtn on' : 'rigBtn';
+  document.getElementById('btnAgc').textContent = ['OFF','AUTO','MAN'][j.agcMode];
   document.getElementById('agcLevelRow').style.display = (j.agcMode==2) ? 'flex' : 'none';
   if (lastAgcSet < 0 || Date.now() - lastAgcSet > 1500) {
     document.getElementById('agcSlider').value = j.agcLevel;
     document.getElementById('agcVal').textContent = j.agcLevel;
   }
 
-  document.getElementById('btnPrio').className = j.priorityActive ? 'sideBtn red on' : (j.priorityOn ? 'sideBtn on' : 'sideBtn');
+  document.getElementById('sqToggle').className = j.squelchOn ? 'rigBtn on' : 'rigBtn';
+  document.getElementById('sqToggle').textContent = j.squelchOn ? 'WL' : 'WYL';
+  document.getElementById('sqUseRssi').checked = j.squelchUseRssi;
+  if (lastSqSet < 0 || Date.now() - lastSqSet > 1500) {
+    document.getElementById('sqSlider').value = j.squelchLevel;
+    document.getElementById('sqVal').textContent = j.squelchLevel;
+  }
+
+  const btnPrio = document.getElementById('btnPrio');
+  btnPrio.classList.toggle('armed', j.priorityOn);
+  btnPrio.classList.toggle('hot', j.priorityActive);
+  document.getElementById('btnPrioToggle').className = j.priorityOn ? 'rigBtn wide on' : 'rigBtn wide';
+  document.getElementById('btnPrioToggle').textContent = j.priorityOn ? 'WYLACZ NASLUCH' : 'WLACZ NASLUCH';
+  document.getElementById('prio1Val').textContent = (j.priorityHasA && j.priorityFreqA >= 0) ? (j.priorityFreqA + ' kHz' + (j.priorityActive && !j.priorityActiveIsB ? ' - AKTYWNY' : '')) : 'brak';
+  document.getElementById('prio2Val').textContent = (j.priorityHasB && j.priorityFreqB >= 0) ? (j.priorityFreqB + ' kHz' + (j.priorityActive && j.priorityActiveIsB ? ' - AKTYWNY' : '')) : 'brak';
+
   document.getElementById('swVal').textContent = j.stopwatch;
   document.getElementById('btnSw').className = j.stopwatchRunning ? 'sideBtn on' : 'sideBtn';
   document.getElementById('btnLock').className = j.locked ? 'sideBtn red on' : 'sideBtn';
@@ -2211,11 +3424,15 @@ function render(j) {
   const rdsEmptyEl = document.getElementById('rdsEmpty');
   const rdsStationWrap = document.getElementById('rdsStationWrap');
   const rdsTextWrap = document.getElementById('rdsTextWrap');
-  
+  const rdsPtyWrap = document.getElementById('rdsPtyWrap');
+  const rdsPiWrap = document.getElementById('rdsPiWrap');
+
   if (j.modeIdx == 0) {
-    if (j.rdsStation && j.rdsStation !== lastRdsStation) lastRdsText = ''; 
+    if (j.rdsStation && j.rdsStation !== lastRdsStation) lastRdsText = '';
     if (j.rdsStation) lastRdsStation = j.rdsStation;
     if (j.rdsText && j.rdsText.length >= lastRdsText.length) lastRdsText = j.rdsText;
+    if (j.rdsPty) lastRdsPty = j.rdsPty;
+    if (j.rdsPi) lastRdsPi = j.rdsPi;
     if (lastRdsStation || lastRdsText) {
       rdsEmptyEl.style.display = 'none';
       if (lastRdsStation) {
@@ -2226,25 +3443,33 @@ function render(j) {
         rdsTextWrap.style.display = 'inline';
         document.getElementById('rdsText').textContent = lastRdsText;
       } else rdsTextWrap.style.display = 'none';
+      if (lastRdsPty) { rdsPtyWrap.style.display = 'inline'; document.getElementById('rdsPty').textContent = lastRdsPty; } else rdsPtyWrap.style.display = 'none';
+      if (lastRdsPi) { rdsPiWrap.style.display = 'inline'; document.getElementById('rdsPi').textContent = lastRdsPi; } else rdsPiWrap.style.display = 'none';
     } else {
       rdsEmptyEl.style.display = 'inline';
-      rdsStationWrap.style.display = 'none';
-      rdsTextWrap.style.display = 'none';
+      rdsStationWrap.style.display = 'none'; rdsTextWrap.style.display = 'none';
+      rdsPtyWrap.style.display = 'none'; rdsPiWrap.style.display = 'none';
     }
   } else {
+    lastRdsStation = ''; lastRdsText = ''; lastRdsPty = ''; lastRdsPi = '';
+    rdsEmptyEl.textContent = 'RDS: dostepne tylko w FM';
     rdsEmptyEl.style.display = 'inline';
-    rdsStationWrap.style.display = 'none';
-    rdsTextWrap.style.display = 'none';
-    lastRdsText = ''; lastRdsStation = '';
+    rdsStationWrap.style.display = 'none'; rdsTextWrap.style.display = 'none';
+    rdsPtyWrap.style.display = 'none'; rdsPiWrap.style.display = 'none';
   }
 
   const scanSec = document.getElementById('scanSec');
+  const navScan = document.getElementById('navScan');
   if (j.scanning) {
     scanSec.style.display = 'block';
     document.getElementById('scanFreqVal').textContent = j.scanFreq;
     document.getElementById('scanBtn').textContent = j.scanPaused ? 'WZNOW' : 'PAUZA';
-  } else if (!scanSec.classList.contains('open')) scanSec.style.display = 'none';
+  } else {
+    scanSec.style.display = 'none';
+  }
+  navScan.classList.toggle('armed', j.scanning);
 }
+
 function setFreq(){ const v=document.getElementById('freqInput').value; if(v) api('/api/freq',{f:v}); }
 function setModeBtn(m){ api('/api/mode',{m:m}); }
 function vfoSwap(){ api('/api/vfo'); }
@@ -2253,21 +3478,40 @@ function setVol(v){ api('/api/volume',{v:v}); }
 function toggleMute(){ api('/api/mute',{on: document.getElementById('btnMute').classList.contains('on')?0:1}); }
 function cycleAgc(){ const next=(agcModeCur+1)%3; api('/api/agc',{mode:next}); }
 function agcLevelLive(v){ document.getElementById('agcVal').textContent=v; lastAgcSet=Date.now(); }
+function sqLevelLive(v){ document.getElementById('sqVal').textContent=v; lastSqSet=Date.now(); }
+function setSqLevel(v){ api('/api/squelch', {level: v}); }
+function sqToggleOn(){ api('/api/squelch', {on: document.getElementById('sqToggle').classList.contains('on') ? 0 : 1}); }
+function sqSetMode(){ api('/api/squelch', {useRssi: document.getElementById('sqUseRssi').checked ? 1 : 0}); }
 function setAgcLevel(v){ api('/api/agc',{mode:2,level:v}); }
-function prioSave(){ api('/api/priority',{action:'save'}); toast('Zapisano priorytet'); }
+function prioSave(slot){ api('/api/priority',{action:'save', slot:(slot||'A')}); toast(slot==='B' ? 'Zapisano priorytet 2' : 'Zapisano priorytet 1'); }
 function prioToggle(){ api('/api/priority',{action:'toggle'}); }
 function swToggle(){ api('/api/stopwatch',{action: document.getElementById('btnSw').classList.contains('on')?'stop':'start'}); }
 function swReset(){ api('/api/stopwatch',{action:'reset'}); }
 function toggleLock(){ api('/api/lock',{on: document.getElementById('btnLock').classList.contains('on')?0:1}); }
 function scanToggle(){ const paused=document.getElementById('scanBtn').textContent=='WZNOW'; api('/api/scan',{action:paused?'resume':'pause'}); }
 function meterCycle(){ api('/api/meter/cycle'); toast('Zmieniono tryb metera'); }
+
 function configExport(){ window.location.href = '/api/config/export'; }
 function configImport(file){
   if (!file) return;
   const reader = new FileReader();
   reader.onload = async () => {
     const r = await fetch('/api/config/import', {method:'POST', body: reader.result});
-    if (r.ok) toast('Konfiguracja wczytana - zapisano do EEPROM');
+    const t = await r.text();
+    if (r.ok) toast(t.indexOf('uwaga') >= 0 ? t : 'Konfiguracja wczytana - zapisano do EEPROM');
+    else toast('Blad: plik nie pasuje do tej wersji firmware');
+  };
+  reader.readAsText(file);
+}
+function fullBackupExport(){ window.location.href = '/api/backup/export'; }
+function fullBackupImport(file){
+  if (!file) return;
+  if (!confirm('To nadpisze konfiguracje, cala pamiec stacji i skip-liste na urzadzeniu. Kontynuowac?')) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const r = await fetch('/api/backup/import', {method:'POST', body: reader.result});
+    const t = await r.text();
+    if (r.ok) { toast((t.indexOf('uwaga') >= 0 ? t : 'Backup przywrocony') + ' - zrestartuj urzadzenie, aby wszystko na pewno zadzialalo'); loadMemory(); loadSkipList(); }
     else toast('Blad: plik nie pasuje do tej wersji firmware');
   };
   reader.readAsText(file);
@@ -2277,11 +3521,66 @@ async function loadBands(){
   document.getElementById('bandRow').innerHTML = list.map(b=>`<button data-idx='${b.idx}' onclick='setBandBtn(${b.idx})'>${b.name}</button>`).join('');
 }
 function setBandBtn(idx){ api('/api/band',{idx:idx}); }
+const CB_CHANNELS = [
+  {id:'1',f:26965},{id:'2',f:26975},{id:'3',f:26985},{id:'3a',f:26995},
+  {id:'4',f:27005},{id:'5',f:27015},{id:'6',f:27025},{id:'7',f:27035},{id:'7a',f:27045},
+  {id:'8',f:27055},{id:'9',f:27065},{id:'10',f:27075},{id:'11',f:27085},{id:'11a',f:27080},{id:'11b',f:27095},
+  {id:'12',f:27105},{id:'13',f:27115},{id:'14',f:27125},{id:'15',f:27135},{id:'15a',f:27145},
+  {id:'16',f:27155},{id:'17',f:27165},{id:'18',f:27175},{id:'19',f:27185},{id:'19a',f:27180},{id:'19b',f:27195},
+  {id:'20',f:27205},{id:'21',f:27215},{id:'22',f:27225},{id:'23',f:27255},{id:'24',f:27235},{id:'25',f:27245},
+  {id:'26',f:27265},{id:'27',f:27275},{id:'28',f:27285},{id:'29',f:27295},{id:'30',f:27305},
+  {id:'31',f:27315},{id:'32',f:27325},{id:'33',f:27335},{id:'34',f:27345},{id:'35',f:27355},
+  {id:'36',f:27365},{id:'37',f:27375},{id:'38',f:27385},{id:'39',f:27395},{id:'40',f:27405}
+];
+function populateCB(){
+  const el = document.getElementById('cbGrid');
+  let html = '';
+  CB_CHANNELS.forEach(c => {
+    const freq = c.f / 1000;
+    const small = /[a-z]$/.test(c.id) ? ' style="font-size:.65em"' : '';
+    html += `<button onclick="cbTune('${c.id}')" title='${freq.toFixed(3)} MHz'${small}>${c.id}</button>`;
+  });
+  el.innerHTML = html;
+}
+function cbTune(ch){ api('/api/cb', {ch: ch}); toast('Kanal CB ' + ch); }
+
 let memCache = [];
 let favFilterOn = false;
 async function loadMemory(){
   const r = await fetch('/api/memory'); memCache = await r.json();
+  populateTagFilters();
   renderMemList();
+}
+let knownFreqCache = [];
+async function loadKnownFreq(){
+  const el = document.getElementById('knownList');
+  try {
+    const r = await fetch('/api/knownfreq');
+    knownFreqCache = await r.json();
+  } catch(e) { el.textContent = 'Blad wczytywania'; return; }
+  if (!knownFreqCache.length) { el.textContent = 'Brak danych'; return; }
+  const groups = {};
+  knownFreqCache.forEach(f => { (groups[f.category] = groups[f.category]||[]).push(f); });
+  el.innerHTML = Object.keys(groups).map(cat =>
+    `<div style='color:var(--teal);font-size:.72em;letter-spacing:1px;margin:8px 0 3px;text-transform:uppercase'>${cat}</div>` +
+    groups[cat].map(f => `<div class='memitem' onclick='tuneKnown(${f.freq},"${f.mode}")'><span class='n'>${f.label}</span><span class='f'>${f.freq} kHz ${f.mode}</span></div>`).join('')
+  ).join('');
+}
+function tuneKnown(freq, modeName){
+  const modeIdx = {FM:0, LSB:1, USB:2, AM:3, CW:4}[modeName];
+  api('/api/knownfreq/tune', {freq: freq, mode: modeIdx});
+  toast('Przestrojono na ' + freq + ' kHz');
+}
+function populateTagFilters(){
+  function fill(id, key){
+    const el = document.getElementById(id);
+    const cur = el.value;
+    const vals = [...new Set(memCache.map(m => m[key]).filter(v => v))].sort();
+    el.innerHTML = el.querySelector('option').outerHTML + vals.map(v => `<option value='${v}'>${v}</option>`).join('');
+    if (vals.includes(cur)) el.value = cur;
+  }
+  fill('memCountryFilter', 'country');
+  fill('memLangFilter', 'language');
 }
 function toggleFavFilter(){
   favFilterOn = !favFilterOn;
@@ -2292,21 +3591,59 @@ function toggleFav(slot, ev){
   ev.stopPropagation();
   fetch('/api/memory/favorite?slot='+slot).then(()=>loadMemory());
 }
+function editTag(slot, field, ev){
+  ev.stopPropagation();
+  const m = memCache.find(x => x.slot === slot) || {};
+  const label = field === 'country' ? 'Kod kraju (np. PL, DE, USA):' : 'Kod jezyka (np. POL, ENG, RUS):';
+  const val = prompt(label, m[field] || '');
+  if (val === null) return;
+  const params = new URLSearchParams({slot: slot}); params.set(field, val);
+  fetch('/api/memory/tags?' + params.toString()).then(()=>loadMemory());
+}
+function renameMem(slot, cur, ev){
+  ev.stopPropagation();
+  const val = prompt('Nowa nazwa stacji:', cur || '');
+  if (val === null) return;
+  const params = new URLSearchParams({slot: slot, name: val});
+  fetch('/api/memory/tags?' + params.toString()).then(()=>{ loadMemory(); toast('Zmieniono nazwe'); });
+}
+function deleteMem(slot, ev){
+  ev.stopPropagation();
+  if (!confirm('Usunac te stacje z pamieci?')) return;
+  fetch('/api/memory/delete?slot='+slot).then(()=>{ loadMemory(); toast('Usunieto'); });
+}
+function addCurrentToMem(){
+  const nm = prompt('Nazwa nowej stacji (zapisze obecnie nastawiona czestotliwosc):', '');
+  if (nm === null) return;
+  fetch('/api/memory/add?' + new URLSearchParams({name: nm}).toString()).then(async r => {
+    const j = await r.json();
+    if (j.error) toast(j.error); else { toast('Zapisano do pamieci'); loadMemory(); }
+  });
+}
 function renderMemList(){
   const el = document.getElementById('memList');
   if (!memCache.length) { el.textContent = 'Brak zapisanych stacji'; return; }
   const q = (document.getElementById('memSearch').value || '').toLowerCase();
   const sortBy = document.getElementById('memSort').value;
   const groupBand = document.getElementById('memGroupBand').checked;
+  const countryF = document.getElementById('memCountryFilter').value;
+  const langF = document.getElementById('memLangFilter').value;
   let list = memCache.filter(m => !q || (m.name||'').toLowerCase().includes(q));
   if (favFilterOn) list = list.filter(m => m.fav);
+  if (countryF) list = list.filter(m => m.country === countryF);
+  if (langF) list = list.filter(m => m.language === langF);
   if (sortBy === 'name') list = [...list].sort((a,b)=>(a.name||'').localeCompare(b.name||''));
   else if (sortBy === 'freq') list = [...list].sort((a,b)=>a.freq-b.freq);
   else if (sortBy === 'band') list = [...list].sort((a,b)=>a.band.localeCompare(b.band));
+  else if (sortBy === 'country') list = [...list].sort((a,b)=>(a.country||'').localeCompare(b.country||''));
+  else if (sortBy === 'language') list = [...list].sort((a,b)=>(a.language||'').localeCompare(b.language||''));
   if (!list.length) { el.innerHTML = '<div style="color:var(--dim);padding:8px">Brak wynikow</div>'; return; }
   function row(m){
     const star = m.fav ? '&#9733;' : '&#9734;';
-    return `<div class='memitem' onclick='recall(${m.slot})'><span class='n'><span onclick='toggleFav(${m.slot},event)' style='color:var(--amber);margin-right:6px;cursor:pointer'>${star}</span>${m.name||'(bez nazwy)'}</span><span class='f'>${m.freq} ${m.band} ${m.mode}</span></div>`;
+    const safeName = (m.name||'').replace(/'/g,'&#39;');
+    const countryTag = `<span class='tag' onclick='editTag(${m.slot},"country",event)' title='Kraj'>${m.country||''}</span>`;
+    const langTag = `<span class='tag' onclick='editTag(${m.slot},"language",event)' title='Jezyk'>${m.language||''}</span>`;
+    return `<div class='memitem' onclick='recall(${m.slot})'><span class='n'><span onclick='toggleFav(${m.slot},event)' style='color:var(--amber);margin-right:6px;cursor:pointer'>${star}</span>${m.name||'(bez nazwy)'}${countryTag}${langTag}</span><span class='f'>${m.freq} ${m.band} ${m.mode}<span class='memAction' onclick='renameMem(${m.slot},"${safeName}",event)' title='Zmien nazwe'>&#9998;</span><span class='memAction del' onclick='deleteMem(${m.slot},event)' title='Usun'>&#10006;</span></span></div>`;
   }
   if (groupBand) {
     const groups = {};
@@ -2324,6 +3661,18 @@ function memImport(file){
   const reader = new FileReader();
   reader.onload = async () => {
     const r = await fetch('/api/memory/import', {method:'POST', body: reader.result});
+    const j = await r.json();
+    toast('Zaimportowano: ' + j.imported + ', pominieto: ' + j.skipped);
+    loadMemory();
+  };
+  reader.readAsText(file);
+}
+function memExportCsv(){ window.location.href = '/api/memory/export.csv'; }
+function memImportCsv(file){
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const r = await fetch('/api/memory/import.csv', {method:'POST', body: reader.result});
     const j = await r.json();
     toast('Zaimportowano: ' + j.imported + ', pominieto: ' + j.skipped);
     loadMemory();
@@ -2354,6 +3703,7 @@ function skipImport(file){
   };
   reader.readAsText(file);
 }
+
 async function loadDiscovery(){
   const r = await fetch('/api/discovery'); const list = await r.json();
   const el = document.getElementById('discList');
@@ -2362,37 +3712,56 @@ async function loadDiscovery(){
 }
 function discExport(){ window.location.href = '/api/discovery/export'; }
 
-const settingsMeta = [
-  {key:'wifiEnable', label:'WiFi wlaczone'},
-  {key:'RDSalways', label:'RDS zawsze (nie tylko FM btn)'},
-  {key:'saverOn', label:'Wygaszacz ekranu'},
-  {key:'digitLigth', label:'Podswietlenie cyfr'},
-  {key:'batShow', label:'Pokazuj baterie'},
-  {key:'nightModeOn', label:'Tryb nocny (NTP)'},
-  {key:'analogMeterOn', label:'Analogowy S-metr'},
-  {key:'rssiHistoryOn', label:'Wykres trendu RSSI'},
-  {key:'cwDecoderOn', label:'Dekoder CW'},
-  {key:'scanWaterfallOn', label:'Waterfall w SCAN'},
-  {key:'scanStopOnSignal', label:'Stop na sygnale (SCAN)'},
-  {key:'screenV', label:'Orientacja pionowa'},
-  {key:'VHFon', label:'FM od 64 MHz'},
-  {key:'seekAccuracy', label:'Szukaj w AM 1 KHz'},
-  {key:'closeCallOn', label:'Close Call (skok na peak po SCAN)'},
+const settingsGroups = [
+  {title:'Wyswietlacz', keys:['digitLigth','batShow','saverOn','screenV','nightModeOn','analogMeterOn','rssiHistoryOn']},
+  {title:'Odbior / Radio', keys:['VHFon','seekAccuracy','cwDecoderOn','cwUpperSideband','ecssOn','deEmphasisEurope','RDSalways']},
+  {title:'Skanowanie', keys:['scanWaterfallOn','scanStopOnSignal','closeCallOn']},
+  {title:'Siec', keys:['wifiEnable']},
 ];
+const settingsLabels = {
+  wifiEnable:'WiFi wlaczone', RDSalways:'RDS zawsze (nie tylko FM btn)', saverOn:'Wygaszacz ekranu',
+  digitLigth:'Podswietlenie cyfr', batShow:'Pokazuj baterie', nightModeOn:'Tryb nocny (NTP)',
+  analogMeterOn:'Analogowy S-metr', rssiHistoryOn:'Wykres trendu RSSI', cwDecoderOn:'Dekoder CW',
+  scanWaterfallOn:'Waterfall w SCAN', scanStopOnSignal:'Stop na sygnale (SCAN)', screenV:'Orientacja pionowa',
+  VHFon:'FM od 64 MHz', seekAccuracy:'Szukaj w AM 1 KHz', closeCallOn:'Close Call (skok na peak po SCAN)',
+  cwUpperSideband:'CW: gorna wstega (CW-U, off=CW-L)', ecssOn:'ECSS (AM przez SSB, dostroj na nosna)',
+  deEmphasisEurope:'De-emphasis FM: Europa 50us (off=Ameryki 75us)',
+};
 async function loadSettings() {
   const r = await fetch('/api/settings');
   const j = await r.json();
   const el = document.getElementById('settingsList');
-  el.innerHTML = settingsMeta.map(m => {
-    const on = j[m.key];
-    return `<div class='settingsRow'><span>${m.label}</span><div class='toggle ${on?'on':''}' onclick='toggleSetting("${m.key}", ${on})'><div class='dot'></div></div></div>`;
-  }).join('');
+  el.innerHTML = settingsGroups.map(g => `<div class='setGroupTitle'>${g.title}</div>` + g.keys.map(k => {
+    const on = j[k];
+    return `<div class='settingsRow'><span>${settingsLabels[k]}</span><div class='toggle ${on?'on':''}' onclick='toggleSetting("${k}", ${on})'><div class='dot'></div></div></div>`;
+  }).join('')).join('');
+  document.getElementById('calUSBInput').value = j.calUSB || 0;
+  document.getElementById('calLSBInput').value = j.calLSB || 0;
+}
+async function saveCal() {
+  const u = document.getElementById('calUSBInput').value;
+  const l = document.getElementById('calLSBInput').value;
+  await fetch('/api/settings/set?key=calUSB&value=' + u);
+  await fetch('/api/settings/set?key=calLSB&value=' + l);
+  toast('Kalibracja zapisana');
 }
 async function toggleSetting(key, current) {
   await fetch('/api/settings/set?key=' + key + '&value=' + (current ? '0' : '1'));
   loadSettings();
 }
-async function poll(){ try { await api('/api/status'); } catch(e){} }
+let pollInFlight = false;
+async function poll(){
+  if (pollInFlight) return;
+  pollInFlight = true;
+  try {
+    await api('/api/status');
+    lastOkPoll = Date.now();
+    setConnState(true);
+  } catch(e) {} finally {
+    pollInFlight = false;
+  }
+  if (Date.now() - lastOkPoll > 6000) setConnState(false);
+}
 function toggleCompact(){
   document.body.classList.toggle('compact');
   const on = document.body.classList.contains('compact');
@@ -2400,11 +3769,63 @@ function toggleCompact(){
   try { localStorage.setItem('ats25x2_compact', on ? '1' : '0'); } catch(e){}
 }
 try { if (localStorage.getItem('ats25x2_compact') === '1') toggleCompact(); } catch(e){}
-loadBands(); loadMemory(); loadSettings(); loadSkipList(); poll();
+try {
+  const savedTab = localStorage.getItem('ats25x2_tab');
+  if (savedTab) showTab(savedTab); else showTab('rx');
+} catch(e) { showTab('rx'); }
+loadBands(); loadMemory(); loadSettings(); loadSkipList(); loadKnownFreq(); populateCB(); poll();
 setInterval(poll, 2000);
 </script>
 </body></html>)HTMLPAGE";
   webServer.send(200, "text/html", html);
+}
+
+bool otaInProgress = false;
+
+void setupOTA() {
+  static bool otaConfigured = false;
+  if (otaConfigured) return;
+  otaConfigured = true;
+  ArduinoOTA.setHostname("ats25x2");
+  ArduinoOTA.onStart([]() {
+    otaInProgress = true;
+    si4735.setAudioMute(audioMuteOn);
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextSize(2);
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    tft.setCursor(10, 30);
+    tft.println("AKTUALIZACJA OTA");
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(10, 60);
+    tft.println("Nie wylaczaj urzadzenia...");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    static int lastPct = -1;
+    int pct = total ? (progress * 100) / total : 0;
+    if (pct != lastPct) {
+      lastPct = pct;
+      tft.drawRect(10, 90, 220, 20, TFT_WHITE);
+      tft.fillRect(12, 92, (216 * pct) / 100, 16, TFT_GREEN);
+      tft.setTextSize(1);
+      tft.setTextColor(TFT_WHITE, TFT_BLACK);
+      tft.setCursor(10, 118);
+      tft.print(String(pct) + "%   ");
+    }
+  });
+  ArduinoOTA.onEnd([]() {
+    tft.setCursor(10, 118);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.println("Gotowe - restart...   ");
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    otaInProgress = false;
+    tft.fillRect(10, 110, 220, 40, TFT_BLACK);
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.setCursor(10, 118);
+    tft.println("Blad OTA nr " + String((int)error));
+  });
+  ArduinoOTA.begin();
 }
 
 void enableWebServer() {
@@ -2412,25 +3833,33 @@ void enableWebServer() {
     if (strlen(storage.wifiSSID)) {
       WiFi.mode(WIFI_STA);
       WiFi.begin(storage.wifiSSID, storage.wifiPassword);
+      wifiForceWpa2Retry();
       unsigned long t0 = millis();
-      while (WiFi.status() != WL_CONNECTED and (millis() - t0) < 8000) delay(200);
+      while (WiFi.status() != WL_CONNECTED and (millis() - t0) < 15000) delay(200);
       wifiConnected = (WiFi.status() == WL_CONNECTED);
     }
   }
   if (wifiConnected and !webServerRunning) {
     webServer.on("/", webHandleRoot);
+    webServer.on("/manifest.json", webHandleManifest);
     webServer.on("/api/status", webHandleStatus);
     webServer.on("/api/bands", webHandleBandsList);
     webServer.on("/api/memory", webHandleMemoryList);
     webServer.on("/api/memrecall", webHandleMemoryRecall);
     webServer.on("/api/memory/favorite", webHandleMemoryFavorite);
+    webServer.on("/api/memory/tags", webHandleMemoryTags);
+    webServer.on("/api/memory/delete", webHandleMemoryDelete);
+    webServer.on("/api/memory/add", webHandleMemoryAdd);
     webServer.on("/api/memory/import", HTTP_POST, webHandleMemoryImport);
+    webServer.on("/api/memory/export.csv", webHandleMemoryExportCsv);
+    webServer.on("/api/memory/import.csv", HTTP_POST, webHandleMemoryImportCsv);
     webServer.on("/api/freq", webHandleSetFreq);
     webServer.on("/api/band", webHandleBand);
     webServer.on("/api/mode", webHandleMode);
     webServer.on("/api/volume", webHandleVolume);
     webServer.on("/api/mute", webHandleMute);
     webServer.on("/api/agc", webHandleAGC);
+    webServer.on("/api/squelch", webHandleSquelch);
     webServer.on("/api/vfo", webHandleVFOSwap);
     webServer.on("/api/priority", webHandlePriority);
     webServer.on("/api/stopwatch", webHandleStopwatch);
@@ -2438,10 +3867,15 @@ void enableWebServer() {
     webServer.on("/api/scan", webHandleScan);
     webServer.on("/api/settings", webHandleSettingsGet);
     webServer.on("/api/settings/set", webHandleSettingsSet);
+    webServer.on("/api/knownfreq", webHandleKnownFreq);
+    webServer.on("/api/knownfreq/tune", webHandleKnownFreqTune);
     webServer.on("/api/skiplist", webHandleSkipList);
     webServer.on("/api/meter/cycle", webHandleMeterCycle);
+    webServer.on("/api/cb", webHandleCB);
     webServer.on("/api/config/export", webHandleConfigExport);
     webServer.on("/api/config/import", HTTP_POST, webHandleConfigImport);
+    webServer.on("/api/backup/export", webHandleFullBackupExport);
+    webServer.on("/api/backup/import", HTTP_POST, webHandleFullBackupImport);
     webServer.on("/api/skiplist/add", webHandleSkipListAdd);
     webServer.on("/api/skiplist/remove", webHandleSkipListRemove);
     webServer.on("/api/skiplist/export", webHandleSkipListExport);
@@ -2453,6 +3887,7 @@ void enableWebServer() {
     if (MDNS.begin("ats25x2")) {
       MDNS.addService("http", "tcp", 80);
     }
+    setupOTA();
   }
 }
 
@@ -2466,33 +3901,75 @@ void disableWebServer() {
 
 uint16_t scaledRowBuf[400];
 
-
-void pushScaledImage(TFT_eSprite &target, int destW, int destH, const uint16_t *img, int srcW, int srcH) {
+template<typename T>
+void pushScaledImage(T &target, int x0, int y0, int destW, int destH, const uint16_t *img, int srcW, int srcH) {
   for (int y = 0; y < destH; y++) {
     int srcY = y * srcH / destH;
     for (int x = 0; x < destW; x++) {
       int srcX = x * srcW / destW;
       scaledRowBuf[x] = img[srcY * srcW + srcX];
     }
-    target.pushImage(0, y, destW, 1, scaledRowBuf);
+    target.pushImage(x0, y0 + y, destW, 1, scaledRowBuf);
   }
 }
 
-void pushScaledDimmedImage(TFT_eSprite &target, int destW, int destH, const uint16_t *img, int srcW, int srcH, float brightness) {
+template<typename T>
+void pushScaledDimmedImage(T &target, int x0, int y0, int destW, int destH, const uint16_t *img, int srcW, int srcH, float brightness) {
   for (int y = 0; y < destH; y++) {
     int srcY = y * srcH / destH;
     for (int x = 0; x < destW; x++) {
       int srcX = x * srcW / destW;
       uint16_t raw = img[srcY * srcW + srcX];
-      uint16_t px = (raw << 8) | (raw >> 8); 
+      uint16_t px = (raw << 8) | (raw >> 8);
       uint16_t r = (uint16_t)(((px >> 11) & 0x1F) * brightness + 0.5);
       uint16_t g = (uint16_t)(((px >> 5)  & 0x3F) * brightness + 0.5);
       uint16_t b = (uint16_t)((px         & 0x1F) * brightness + 0.5);
       uint16_t dimmed = (r << 11) | (g << 5) | b;
-      scaledRowBuf[x] = (dimmed << 8) | (dimmed >> 8); 
+      scaledRowBuf[x] = (dimmed << 8) | (dimmed >> 8);
     }
-    target.pushImage(0, y, destW, 1, scaledRowBuf);
+    target.pushImage(x0, y0 + y, destW, 1, scaledRowBuf);
   }
+}
+
+void printOutlineText(String text, int x0, int y0, uint16_t fg, uint16_t outlineColor, uint8_t px) {
+  tft.setTextColor(outlineColor);
+  for (int8_t dx = -px; dx <= px; dx++) {
+    for (int8_t dy = -px; dy <= px; dy++) {
+      if (dx == 0 and dy == 0) continue;
+      tft.setCursor(x0 + dx, y0 + dy);
+      tft.print(text);
+    }
+  }
+  tft.setTextColor(fg);
+  tft.setCursor(x0, y0);
+  tft.print(text);
+}
+
+void drawScaledText(String text, int x0, int y0, float scale, uint16_t color, uint16_t bgColor) {
+  int baseW = text.length() * 6 + 2;
+  int baseH = 8;
+  TFT_eSprite txtSpr = TFT_eSprite(&tft);
+  txtSpr.setColorDepth(16);
+  txtSpr.createSprite(baseW, baseH);
+  txtSpr.fillSprite(bgColor);
+  txtSpr.setTextColor(color, bgColor);
+  txtSpr.setTextSize(1);
+  txtSpr.setCursor(0, 0);
+  txtSpr.print(text);
+
+  int destW = (int)(baseW * scale);
+  int destH = (int)(baseH * scale);
+  for (int y = 0; y < destH; y++) {
+    int srcY = (int)(y / scale);
+    if (srcY >= baseH) srcY = baseH - 1;
+    for (int x = 0; x < destW; x++) {
+      int srcX = (int)(x / scale);
+      if (srcX >= baseW) srcX = baseW - 1;
+      scaledRowBuf[x] = txtSpr.readPixel(srcX, srcY);
+    }
+    tft.pushImage(x0, y0 + y, destW, 1, scaledRowBuf);
+  }
+  txtSpr.deleteSprite();
 }
 
 #ifdef IhaveSI5351
@@ -2728,10 +4205,10 @@ const KbdKeyDef kbdRow3Letters[] = { {"Shift",KC_SHIFT,2},{"z",KC_CHAR,1},{"x",K
 
 const KbdKeyDef kbdRow1Nums[] = { {"1",KC_CHAR,1},{"2",KC_CHAR,1},{"3",KC_CHAR,1},{"4",KC_CHAR,1},{"5",KC_CHAR,1},{"6",KC_CHAR,1},{"7",KC_CHAR,1},{"8",KC_CHAR,1},{"9",KC_CHAR,1},{"0",KC_CHAR,1} };
 const KbdKeyDef kbdRow2Nums[] = { {"!",KC_CHAR,1},{"@",KC_CHAR,1},{"#",KC_CHAR,1},{"$",KC_CHAR,1},{"%",KC_CHAR,1},{"^",KC_CHAR,1},{"&",KC_CHAR,1},{"*",KC_CHAR,1},{"(",KC_CHAR,1},{")",KC_CHAR,1} };
-const KbdKeyDef kbdRow3Nums[] = { {"-",KC_CHAR,1},{"_",KC_CHAR,1},{"=",KC_CHAR,1},{"+",KC_CHAR,1},{".",KC_CHAR,1},{",",KC_CHAR,1},{"/",KC_CHAR,1},{"Bksp",KC_BKSP,2} };
+const KbdKeyDef kbdRow3Nums[] = { {"-",KC_CHAR,1},{"_",KC_CHAR,1},{"=",KC_CHAR,1},{"+",KC_CHAR,1},{".",KC_CHAR,1},{",",KC_CHAR,1},{"/",KC_CHAR,1},{"'",KC_CHAR,1},{"\"",KC_CHAR,1},{"?",KC_CHAR,1} };
 
 const KbdKeyDef kbdRow4[] = { {"123",KC_NUMSYM,2},{"Spacja",KC_SPACE,3},{"Pokaz",KC_SHOW,2} };
-const KbdKeyDef kbdRow4Num[] = { {"ABC",KC_ABC,2},{"Spacja",KC_SPACE,3},{"Pokaz",KC_SHOW,2} };
+const KbdKeyDef kbdRow4Num[] = { {"ABC",KC_ABC,2},{"Spacja",KC_SPACE,2},{"Bksp",KC_BKSP,2},{"Pokaz",KC_SHOW,2} };
 
 KbdRect kbdRects[16];
 int kbdRectCount;
@@ -2759,6 +4236,8 @@ String wifiKeyboardInput(String title, bool &cancelled) {
   cancelled = false;
   String val = "";
   bool shiftOn = false, numMode = false, showText = false;
+  bool capsLock = false;
+  unsigned long lastShiftTapMs = 0;
   const int16_t rowH = 32, rowGap = 3;
   const int16_t row1Y = 56, row2Y = row1Y + rowH + rowGap, row3Y = row2Y + rowH + rowGap, row4Y = row3Y + rowH + rowGap;
   const int16_t actY = row4Y + rowH + 8;
@@ -2789,13 +4268,13 @@ String wifiKeyboardInput(String title, bool &cancelled) {
     } else {
       kbdLayoutRow(kbdRow1Nums, 10, row1Y, rowH);
       kbdLayoutRow(kbdRow2Nums, 10, row2Y, rowH);
-      kbdLayoutRow(kbdRow3Nums, 8,  row3Y, rowH);
-      kbdLayoutRow(kbdRow4Num,  3,  row4Y, rowH);
+      kbdLayoutRow(kbdRow3Nums, 10, row3Y, rowH);
+      kbdLayoutRow(kbdRow4Num,  4,  row4Y, rowH);
     }
     for (int i = 0; i < kbdRectCount; i++) {
       KbdRect &r = kbdRects[i];
       uint16_t bg = (r.def->code == KC_CHAR) ? TFT_NAVY : TFT_BLUE;
-      if (r.def->code == KC_SHIFT && shiftOn) bg = TFT_ORANGE;
+      if (r.def->code == KC_SHIFT) { if (capsLock) bg = TFT_RED; else if (shiftOn) bg = TFT_ORANGE; }
       tft.fillRoundRect(r.x, r.y, r.w, r.h, 3, bg);
       tft.drawRoundRect(r.x, r.y, r.w, r.h, 3, TFT_WHITE);
       tft.setTextColor(TFT_WHITE, bg);
@@ -2822,10 +4301,23 @@ String wifiKeyboardInput(String title, bool &cancelled) {
             char c = r.def->label[0];
             if (shiftOn && !numMode) c = toupper(c);
             if (val.length() < KBD_MAX_LEN) val += c;
-            if (shiftOn && !numMode) shiftOn = false;
+            if (shiftOn && !numMode && !capsLock) shiftOn = false;
             break;
           }
-          case KC_SHIFT:  shiftOn = !shiftOn; break;
+          case KC_SHIFT: {
+            unsigned long now = millis();
+            if (capsLock) {
+              capsLock = false;
+              shiftOn = false;
+            } else if (shiftOn && (now - lastShiftTapMs) < 400) {
+              capsLock = true;
+              shiftOn = true;
+            } else {
+              shiftOn = !shiftOn;
+            }
+            lastShiftTapMs = now;
+            break;
+          }
           case KC_BKSP:   if (val.length()) val.remove(val.length() - 1); break;
           case KC_SPACE:  if (val.length() < KBD_MAX_LEN) val += ' '; break;
           case KC_NUMSYM: numMode = true; break;
@@ -2837,6 +4329,9 @@ String wifiKeyboardInput(String title, bool &cancelled) {
     }
     x = y = 0; delay(120);
   }
+}
+
+void wifiForceWpa2Retry() {
 }
 
 bool wifiTryConnect(String ssid, String pass, uint32_t timeoutMs = 15000) {
@@ -2881,14 +4376,28 @@ bool nativeWifiSetup() {
 
     if (wifiTryConnect(ssid, pass)) return true;
 
+    wl_status_t wst = WiFi.status();
+    String reason;
+    switch (wst) {
+      case WL_NO_SSID_AVAIL:   reason = "Siec zniknela z zasiegu"; break;
+      case WL_CONNECT_FAILED:  reason = "Router odrzucil polaczenie"; break;
+      case WL_CONNECTION_LOST: reason = "Polaczenie przerwane"; break;
+      case WL_DISCONNECTED:    reason = "Brak odpowiedzi (timeout)"; break;
+      default:                 reason = "Kod bledu WiFi: " + String((int)wst); break;
+    }
+    Serial.println("WiFi polaczenie nieudane, status=" + String((int)wst) + " (" + reason + ")");
+
     tft.fillScreen(TFT_BLACK);
     tft.setTextSize(2);
     tft.setTextColor(TFT_RED, TFT_BLACK);
     tft.setCursor(10, 10);
     tft.println("Nie udalo sie polaczyc");
     tft.setTextSize(1);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextColor(TFT_ORANGE, TFT_BLACK);
     tft.setCursor(10, 50);
+    tft.println(reason);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(10, 66);
     tft.println("Sprawdz haslo i sprobuj ponownie.");
     tft.println("Dotknij ekran, aby kontynuowac.");
     while (!tft.getTouch(&x, &y)) delay(50);
@@ -2918,6 +4427,7 @@ bool connectWifi()
     Serial.println(storage.wifiSSID);
 
     WiFi.begin(storage.wifiSSID, storage.wifiPassword);
+    wifiForceWpa2Retry();
 
     uint32_t t0 = millis();
 
@@ -3143,7 +4653,7 @@ if (wifiEnable) {
   wifiConnected = connectWifi();
   if (wifiConnected) {
     initTime();
-    if (webServerOn) { 
+    if (webServerOn) {
       enableWebServer();
       Serial.println("Serwer WWW uruchomiony.");
     } else {
@@ -3161,28 +4671,17 @@ if (wifiEnable) {
 
   delay(500);
   tft.fillScreen(TFT_BLACK);
-  tft.setCursor(20, 10);
   tft.setTextSize(2);
-  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
 
   Serial.println("ATS25X2 Polish Project");
-  Serial.println("Versja 0.17PL 12-08-2026");
+  Serial.println("Versja 0.2PL 21-08-2026");
 
-  spr.createSprite(320, 144);
-  spr.fillScreen(COLOR_BACKGROUND);
-  pushScaledDimmedImage(spr, 320, 144, (const uint16_t *)logo, 265, 120, 0.35); 
-  spr.pushSprite(0, 20);
-  spr.deleteSprite();
+  pushScaledDimmedImage(tft, 10, 20, 300, 170, (const uint16_t *)logo, 300, 170, 0.35);
 
-  tft.println("ATS25X2 Polish Project");
-  tft.setCursor(7, 33);
-  tft.println(" Wersja 0.17PL");
-  tft.setCursor(7, 56);
-  tft.println(" 12-08-2026");
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.setCursor(7, 79);
-  tft.println(" RoX10 PL MOD");
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  printOutlineText("ATS25X2 Polish Project", 20, 10, TFT_YELLOW, TFT_BLACK, 2);
+  printOutlineText(" Wersja 0.2PL", 7, 33, TFT_YELLOW, TFT_BLACK, 2);
+  printOutlineText(" 21-08-2026", 7, 56, TFT_YELLOW, TFT_BLACK, 2);
+  printOutlineText(" RoX10 PL MOD", 7, 79, TFT_WHITE, TFT_BLACK, 2);
   tft.setTextSize(1);
   tft.setCursor(0, 160);
   tftPlSetSize(1);
@@ -3195,18 +4694,13 @@ if (wifiEnable) {
   tftPlPrint("PRZYTRZYMAJ ENKODER I DOTKNIJ EKRAN", 0, 196);
   tftPlPrint("BY GO OBRÓCIĆ", 0, 208);
   tft.setTextSize(2);
-  tft.setCursor(20, 130);
   delay(1500);
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
   if ( si4735Addr == 0 ) {
-    tft.setTextColor(TFT_RED, TFT_BLACK);
-    tft.print("NIE WYKRYTO Si4735");
+    printOutlineText("NIE WYKRYTO Si4735", 20, 130, TFT_RED, TFT_BLACK, 2);
     Serial.println("NIE WYKRYTO Si4735");
     while (1);
   } else {
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.print("Si473X addr :  ");
-    tft.println(si4735Addr, HEX);
+    printOutlineText("Si473X addr :  " + String(si4735Addr, HEX), 20, 130, TFT_GREEN, TFT_BLACK, 2);
 	delay(3000);
   }
 
@@ -3220,6 +4714,7 @@ if (wifiEnable) {
   loadConfig();
   printConfig();
   updateCWDecoderPin();
+  updateRTTYDecoderPin();
   tft.setTouch(touchCalData);
 
   pinMode(ENCODER_PIN_A , INPUT_PULLUP);
@@ -3375,6 +4870,20 @@ if (wifiEnable) {
     uint16_t defCal[5] = {387, 3530, 246, 3555, 7};
     for (int i = 0; i < 5; i++) storage.touchCalData[i] = touchCalData[i] = defCal[i];
   }
+  if (storage.chk12 == '@') {
+    themeIdx = storage.themeIdx;
+    if (themeIdx >= THEME_COUNT) themeIdx = 0;
+  } else {
+    storage.chk12 = '@';
+    storage.themeIdx = themeIdx = 0;
+  }
+  applyColorTheme(themeIdx);
+  if (storage.chk13 == '@') {
+    squelchAdaptiveOn = storage.squelchAdaptiveOn;
+  } else {
+    storage.chk13 = '@';
+    storage.squelchAdaptiveOn = squelchAdaptiveOn = 0;
+  }
 
   OPTunpack();
   scanOPTunpack();
@@ -3407,16 +4916,70 @@ if (wifiEnable) {
       }
       if (n < 21) for (int j = n; j < 21; j++) MemoBank[i].Name[j] = char(32);
     }
+    MemoBank[i].favorite = 0;
+    MemoBank[i].country[0] = '\0';
+    MemoBank[i].language[0] = '\0';
   }
   if (loadMemory) {
     saveMemo();
     loadMemory = false;
   }
-  loadMemo();
+
+  if (storage.chk14 != '@') {
+    struct OldMemoryBank { uint16_t freq; uint8_t band; char Name[21]; };
+    if (EEPROM.read(offsetEEPROM + 0) == storage.chkDigit) {
+      for (int i = 0; i <= lastMemoBank; i++) {
+        OldMemoryBank oldSlot;
+        for (unsigned int t = 0; t < sizeof(OldMemoryBank); t++) {
+          *((char*)&oldSlot + t) = EEPROM.read(offsetMemoEEPROM_LEGACY + i * sizeof(OldMemoryBank) + t);
+        }
+        if (oldSlot.freq == 0 or (oldSlot.freq >= 153 and oldSlot.freq <= 30000)) {
+          MemoBank[i].freq = oldSlot.freq;
+          MemoBank[i].band = oldSlot.band;
+          for (int j = 0; j < 21; j++) MemoBank[i].Name[j] = oldSlot.Name[j];
+        }
+      }
+      Serial.println("Zmigrowano pamięć stacji do nowego formatu (favorite/country/language)");
+    }
+    storage.chk14 = '@';
+    saveMemo();
+  } else {
+    loadMemo();
+  }
+  if (storage.chk15 == '@') {
+    rttyDecoderOn = storage.rttyDecoderOn;
+  } else {
+    storage.chk15 = '@';
+    storage.rttyDecoderOn = rttyDecoderOn = 0;
+  }
+  if (storage.chk16 == '@') {
+    for (int i = 0; i <= lastBand; i++) {
+      uint16_t f = storage.bandFreqSave[i];
+      if (f >= band[i].minimumFreq and f <= band[i].maximumFreq) band[i].currentFreq = f;
+      uint8_t m = storage.bandModeSave[i];
+      if (m <= CW) band[i].prefmod = m;
+    }
+  } else {
+    storage.chk16 = '@';
+  }
+  if (storage.chk17 == '@') {
+    batVolt = storage.batVolt;
+  } else {
+    storage.chk17 = '@';
+    storage.batVolt = batVolt = 1;
+  }
+  if (storage.chk18 == '@') {
+    closeCallOn = storage.closeCallOn;
+  } else {
+    storage.chk18 = '@';
+    storage.closeCallOn = closeCallOn = 0;
+  }
 
 #ifdef IhaveCrystal
   if (bandIdx == 0) si4735.setup(RESET_PIN, FM_BAND_TYPE);
   else si4735.setup(RESET_PIN, 1);
+  si4735.setAudioMute(audioMuteOn);
+  si4735.setVolume(0);
   if (bandIdx != 0) si4735.setAM();
 #endif
 
@@ -3426,6 +4989,8 @@ if (wifiEnable) {
   si4735.setRefClockPrescaler(1);
   if (bandIdx == 0)  si4735.setup(RESET_PIN, -1, POWER_UP_FM, SI473X_ANALOG_AUDIO, XOSCEN_RCLK);
   else si4735.setup(RESET_PIN, -1, POWER_UP_AM, SI473X_ANALOG_AUDIO, XOSCEN_RCLK);
+  si4735.setAudioMute(audioMuteOn);
+  si4735.setVolume(0);
   if (bandIdx != 0) si4735.setAM();
 #endif
 
@@ -3470,20 +5035,16 @@ void drawProgress(uint8_t percentage, String text) {
 
   if (!drawProgressScreenReady) {
     tft.fillScreen(TFT_BLACK);
-    const int logoW = 320; 
-    const int logoH = 120 * logoW / 265; 
-    spr.createSprite(logoW, logoH);
+    const int logoW = 300;
+    const int logoH = 170;
+    const int logoX = 10;
 
     for (float b = 0.15; b < 1.0; b += 0.17) {
-      spr.fillSprite(TFT_BLACK);
-      pushScaledDimmedImage(spr, logoW, logoH, (uint16_t *)logo, 265, 120, b);
-      spr.pushSprite(0, 20);
+      pushScaledDimmedImage(tft, logoX, 0, logoW, logoH, (uint16_t *)logo, 300, 170, b);
       delay(25);
     }
 
-    pushScaledImage(spr, logoW, logoH, (uint16_t *)logo, 265, 120);
-    spr.pushSprite(0, 20);
-    spr.deleteSprite();
+    pushScaledImage(tft, logoX, 0, logoW, logoH, (uint16_t *)logo, 300, 170);
     drawProgressScreenReady = true;
   }
 
@@ -3552,6 +5113,10 @@ void SaveInEeprom (void* arg)  {
     storage.BFOCB  = band[27].lastmanuBFO;
     storage.BFO10M = band[28].lastmanuBFO;
     storage.BFOSW  = band[29].lastmanuBFO;
+    for (int i = 0; i <= lastBand; i++) {
+      storage.bandFreqSave[i] = band[i].currentFreq;
+      storage.bandModeSave[i] = band[i].prefmod;
+    }
     storage.PresetId = PresetId;
     storage.currentPRES = currentPRES;
     storage.currentFreqRetro0 = uint16_t(bandRetro[0].currentFreq * 100);
@@ -3576,6 +5141,11 @@ void SaveInEeprom (void* arg)  {
     storage.scanStopSeconds = scanStopSeconds;
     storage.scanWaterfallOn = scanWaterfallOn;
     storage.cwDecoderOn = cwDecoderOn;
+    storage.themeIdx = themeIdx;
+    storage.squelchAdaptiveOn = squelchAdaptiveOn;
+    storage.rttyDecoderOn = rttyDecoderOn;
+    storage.batVolt = batVolt;
+    storage.closeCallOn = closeCallOn;
     for (int i = 0; i < 5; i++) storage.touchCalData[i] = touchCalData[i];
 
     bool eepromChanged = false;
@@ -3698,7 +5268,29 @@ void printConfig() {
 void BandSet()  {
 
   si4735.setAudioMute(audioMuteOn);
+  hwMuteLevel = digitalRead(AUDIO_MUTE);
+  int savedVolBandSet = si4735.getVolume();
+  si4735.setVolume(0);
   if (bandIdx == 0) currentMode = FM;
+
+  if (lastSquelchMode != 255 and lastSquelchMode != currentMode and lastSquelchMode < 5) {
+    squelchByMode[lastSquelchMode] = currentSquelch;
+  }
+  if (currentMode < 5) {
+    if (squelchByMode[currentMode] >= 0) currentSquelch = squelchByMode[currentMode];
+    lastSquelchMode = currentMode;
+  }
+
+  if (lastAgcMode != 255 and lastAgcMode != currentMode and lastAgcMode < 5) {
+    agcModeByMode[lastAgcMode] = AGCgain;
+    agcLevelByMode[lastAgcMode] = currentAGCgain;
+  }
+  if (currentMode < 5) {
+    if (agcModeByMode[currentMode] >= 0) AGCgain = agcModeByMode[currentMode];
+    if (agcLevelByMode[currentMode] >= 0) currentAGCgain = agcLevelByMode[currentMode];
+    lastAgcMode = currentMode;
+  }
+
   if ((currentMode == AM) or (currentMode == FM)) {
     ssbLoaded = false;
   }
@@ -3711,11 +5303,25 @@ void BandSet()  {
   useBand();
   setBandWidth();
   checkAGC();
-  delay(20);
+  delay(120);
+  si4735.setVolume(savedVolBandSet);
   si4735.setAudioMute(audioMuteOff);
 }
 
 void useBand()  {
+  if (currentMode != LSB and currentMode != USB and currentMode != CW) {
+    uint16_t stepForAlign = 0;
+    if (band[bandIdx].bandType == MW_BAND_TYPE or band[bandIdx].bandType == LW_BAND_TYPE) stepForAlign = ssIdxMW;
+    else if (band[bandIdx].bandType == SW_BAND_TYPE) stepForAlign = ssIdxAM;
+    else if (band[bandIdx].bandType == FM_BAND_TYPE) stepForAlign = ssIdxFM;
+    if (stepForAlign > 0) {
+      uint16_t remainder = band[bandIdx].currentFreq % stepForAlign;
+      if (remainder != 0) {
+        if (remainder * 2 >= stepForAlign) band[bandIdx].currentFreq += (stepForAlign - remainder);
+        else band[bandIdx].currentFreq -= remainder;
+      }
+    }
+  }
 
   if ((band[bandIdx].bandType == MW_BAND_TYPE) || (band[bandIdx].bandType == LW_BAND_TYPE)) {
     band[bandIdx].currentStep = ssIdxMW;
@@ -3730,7 +5336,8 @@ void useBand()  {
     delay(100);
     band[bandIdx].currentStep = ssIdxFM;
     si4735.setFM(band[bandIdx].minimumFreq, band[bandIdx].maximumFreq, band[bandIdx].currentFreq, band[bandIdx].currentStep);
-    si4735.setFMDeEmphasis(1);
+    if (hwMuteLevel >= 0) digitalWrite(AUDIO_MUTE, hwMuteLevel);
+    si4735.setFMDeEmphasis(deEmphasisEurope ? 2 : 1);
     ssbLoaded = false;
     si4735.RdsInit();
     si4735.setRdsConfig(1, 2, 2, 2, 2);
@@ -3744,9 +5351,14 @@ void useBand()  {
     }
     if (ssbLoaded)
     {
-      si4735.setSSB(band[bandIdx].minimumFreq, band[bandIdx].maximumFreq, band[bandIdx].currentFreq, band[bandIdx].currentStep, currentMode);
+      uint8_t sidebandParam = currentMode;
+      if (currentMode == CW) sidebandParam = cwUpperSideband ? USB : LSB;
+      si4735.setSSB(band[bandIdx].minimumFreq, band[bandIdx].maximumFreq, band[bandIdx].currentFreq, band[bandIdx].currentStep, sidebandParam);
+      if (hwMuteLevel >= 0) digitalWrite(AUDIO_MUTE, hwMuteLevel);
 
-      si4735.setSSBBfo(currentBFO + currentBFOmanu);
+      if (currentMode == CW) si4735.setSSBBfo(CW_PITCH_HZ * (cwUpperSideband ? 1 : -1) + currentBFOmanu);
+      else if (ecssOn and (currentMode == LSB or currentMode == USB)) si4735.setSSBBfo(currentBFOmanu + (currentMode == USB ? calUSB : calLSB));
+      else si4735.setSSBBfo(currentBFO + currentBFOmanu + ((currentMode == USB) ? calUSB : (currentMode == LSB) ? calLSB : 0));
       int temp = 1;
       si4735.setFrequencyStep(temp);
       band[bandIdx].currentStep = temp;
@@ -3754,6 +5366,7 @@ void useBand()  {
     else
     {
       si4735.setAM(band[bandIdx].minimumFreq, band[bandIdx].maximumFreq, band[bandIdx].currentFreq, band[bandIdx].currentStep);
+      if (hwMuteLevel >= 0) digitalWrite(AUDIO_MUTE, hwMuteLevel);
 
       bfoOn = false;
     }
@@ -3853,7 +5466,7 @@ void Freqcalq(int keyval)  {
     } else {
       int khz = trunc(DisplayfreqNew / 10000);
       int hz = (DisplayfreqNew - (khz * 10000)) / 10;
-      char s[6] = {'\0'};
+      char s[16] = {'\0'};
       if (realFreq < 153) {
         sprintf(s, "%i", hz);
         if ((realFreq > 0 and realFreq < 31) or (realFreq >= 64 and realFreq <= 108)) hhz = " MHz";
@@ -3872,11 +5485,10 @@ void Freqcalq(int keyval)  {
 
 void SmeterHistory() {
 
-  tft.fillRect(Xsmtr + 2, Ysmtr + 6, 236, 46, TFT_BLACK);
-  tft.drawRect(Xsmtr + 2, Ysmtr + 6, 236, 46, TFT_DARKGREY);
+  tft.fillRect(Xsmtr, Ysmtr, tSigW - 6, tSigH - 6, TFT_BLACK);
 
-  int baseY = Ysmtr + 50;
-  int top   = Ysmtr + 20;
+  int baseY = Ysmtr + 54;
+  int top   = Ysmtr + 22;
   int maxH  = baseY - top;
 
   for (int i = 0; i < RSSI_HIST_LEN; i++) {
@@ -3885,22 +5497,22 @@ void SmeterHistory() {
     int h = (v * maxH) / 100;
     uint16_t col;
     if (v < 30) col = TFT_GREEN; else if (v < 60) col = TFT_YELLOW; else col = TFT_RED;
-    int x = Xsmtr + 15 + i * 2;
-    if (h > 0) tft.fillRect(x, baseY - h, 2, h, col);
+    int x = Xsmtr + 4 + i;
+    if (h > 0) tft.fillRect(x, baseY - h, 1, h, col);
   }
-  tft.drawFastHLine(Xsmtr + 3, baseY + 1, 234, TFT_DARKGREY);
+  tft.drawFastHLine(Xsmtr + 4, baseY + 1, 103, TFT_DARKGREY);
 
   tftPlSetFont(T1012_T);
   tftPlSetSize(1);
   tftPlSetStyle(NRG_T);
   tftPlSetDatum(BL_T);
   tftPlSetColor(TFT_CYAN, TFT_TRANS);
-  tftPlPrint("TREND RSSI", Xsmtr + 8, Ysmtr + 17);
+  tftPlPrint("TREND", Xsmtr + 8, Ysmtr + 16);
 
   uint8_t lastVal = rssiHist[RSSI_HIST_LEN - 1];
   tftPlSetDatum(BR_T);
   tftPlSetColor(TFT_YELLOW, TFT_TRANS);
-  tftPlPrint(String(lastVal) + "%", Xsmtr + 231, Ysmtr + 17);
+  tftPlPrint(String(lastVal) + "%", Xsmtr + 125, Ysmtr + 16);
 }
 
 void updateRssiHistory(uint8_t level) {
@@ -4021,9 +5633,15 @@ String rssiToSLabel(int rssiVal, bool isFM) {
     if (rssiVal <= 94) return "S9+50";
     return "S9+60";
   } else {
-    if (rssiVal <=  2) return "S6";
-    if (rssiVal <=  8) return "S7";
-    if (rssiVal <= 14) return "S8";
+    if (rssiVal <=  1) return "S0";
+    if (rssiVal <=  2) return "S1";
+    if (rssiVal <=  3) return "S2";
+    if (rssiVal <=  5) return "S3";
+    if (rssiVal <=  7) return "S4";
+    if (rssiVal <= 10) return "S5";
+    if (rssiVal <= 13) return "S6";
+    if (rssiVal <= 16) return "S7";
+    if (rssiVal <= 20) return "S8";
     if (rssiVal <= 24) return "S9";
     if (rssiVal <= 34) return "S9+10";
     if (rssiVal <= 44) return "S9+20";
@@ -4053,9 +5671,15 @@ int rssiToMeterLevel(int rssiVal, bool isFM) {
     if (rssiVal <= 94) return 14;
     return 15;
   } else {
-    if (rssiVal <=  2) return 6;
-    if (rssiVal <=  8) return 7;
-    if (rssiVal <= 14) return 8;
+    if (rssiVal <=  1) return 0;
+    if (rssiVal <=  2) return 1;
+    if (rssiVal <=  3) return 2;
+    if (rssiVal <=  5) return 3;
+    if (rssiVal <=  7) return 4;
+    if (rssiVal <= 10) return 5;
+    if (rssiVal <= 13) return 6;
+    if (rssiVal <= 16) return 7;
+    if (rssiVal <= 20) return 8;
     if (rssiVal <= 24) return 9;
     if (rssiVal <= 34) return 10;
     if (rssiVal <= 44) return 11;
@@ -4067,36 +5691,49 @@ int rssiToMeterLevel(int rssiVal, bool isFM) {
 }
 
 void drawAnalogMeter() {
-  tft.fillRect(Xsmtr + 2, Ysmtr + 6, 236, 46, TFT_BLACK);
-  tft.drawRect(Xsmtr + 2, Ysmtr + 6, 236, 46, TFT_DARKGREY);
+  int level = rssiToMeterLevel(rssi, currentMode == FM);
+  String aLabel = rssiToSLabel(rssi, currentMode == FM);
+  if (dashEverDrawnSig and level == dashLastBarW and aLabel == dashLastSLabel) return;
+  dashEverDrawnSig = true;
+  dashLastBarW = level; dashLastSLabel = aLabel;
 
-  int cx = Xsmtr + 118, cy = Ysmtr + 54;
-  const int rTickOuter = 44, rTickInner = 36, rNeedle = 38;
+  tft.fillRect(Xsmtr, Ysmtr, tSigW - 6, tSigH - 6, TFT_BLACK);
 
+  int cx = Xsmtr + 66, cy = Ysmtr + 76;
+  const int rOuter = 56, rInner = 46, rNeedle = 52;
+  const float spanDeg = 62.0;
+
+  float prevX = 0, prevY = 0;
   for (int lvl = 0; lvl <= 15; lvl++) {
-    float ang = radians(-50.0 + (100.0 * lvl / 15.0));
-    int x1 = cx + sin(ang) * rTickInner;
-    int y1 = cy - cos(ang) * rTickInner;
-    int x2 = cx + sin(ang) * rTickOuter;
-    int y2 = cy - cos(ang) * rTickOuter;
+    float ang = radians(-spanDeg + (2.0 * spanDeg * lvl / 15.0));
+    bool major = (lvl % 3 == 0);
+    int ri = major ? rInner - 5 : rInner;
+    int x1 = cx + sin(ang) * ri;
+    int y1 = cy - cos(ang) * ri;
+    int x2 = cx + sin(ang) * rOuter;
+    int y2 = cy - cos(ang) * rOuter;
     uint16_t col = (lvl <= 9) ? TFT_SILVER : TFT_RED;
     tft.drawLine(x1, y1, x2, y2, col);
+    if (major) tft.drawLine(x1 + 1, y1, x2 + 1, y2, col);
+    if (lvl > 0) tft.drawLine(prevX, prevY, x2, y2, col);
+    prevX = x2; prevY = y2;
   }
 
-  int level = rssiToMeterLevel(rssi, currentMode == FM);
-  float needleAng = radians(-50.0 + (100.0 * level / 15.0));
+  float needleAng = radians(-spanDeg + (2.0 * spanDeg * level / 15.0));
   int nx = cx + sin(needleAng) * rNeedle;
   int ny = cy - cos(needleAng) * rNeedle;
   tft.drawLine(cx, cy, nx, ny, TFT_RED);
   tft.drawLine(cx + 1, cy, nx + 1, ny, TFT_RED);
-  tft.fillCircle(cx, cy, 3, TFT_SILVER);
+  tft.drawLine(cx - 1, cy, nx - 1, ny, TFT_RED);
+  tft.fillCircle(cx, cy, 4, TFT_SILVER);
+  tft.drawCircle(cx, cy, 5, TFT_DARKGREY);
 
   tftPlSetFont(T1012_T);
   tftPlSetSize(1);
   tftPlSetStyle(NRG_T);
   tftPlSetDatum(BR_T);
   tftPlSetColor(TFT_YELLOW, TFT_TRANS);
-  tftPlPrint(rssiToSLabel(rssi, currentMode == FM), Xsmtr + 231, Ysmtr + 17);
+  tftPlPrint(aLabel, Xsmtr + 125, Ysmtr + 16);
 }
 
 void checkNightMode() {
@@ -4135,30 +5772,44 @@ float readVsupply() {
   return 3.724 * (sum / (float)samples) / 2047;
 }
 
+int lastDisplayedBat = -1;
+
 void Battery() {
 
   float vsupply = readVsupply();
   int bat = map(int(vsupply * 100), batMinV, batMaxV, 0, 100);
+  if (bat < 0) bat = 0;
+  if (bat > 100) bat = 100;
+  if (lastDisplayedBat < 0 or abs(bat - lastDisplayedBat) >= 2) lastDisplayedBat = bat;
+  bat = lastDisplayedBat;
   if ((FirstLayer or ThirdLayer) and ((elapsedBat + 10000) < millis())) {
-    if (bat < 0) bat = 0;
-    if (bat > 100) bat = 100;
-    int colorBatt = TFT_WHITE;
+    if (bat == dashLastDrawnBat and batVolt == dashLastDrawnBatVolt) {
+      elapsedBat = millis();
+    } else {
+    dashLastDrawnBat = bat; dashLastDrawnBatVolt = batVolt;
+    int colorBatt = TFT_GREEN;
+    if (bat < 40) colorBatt = TFT_YELLOW;
     if (bat < 15) colorBatt = TFT_ORANGE;
     if (bat < 5) colorBatt = 64528;
-    tft.drawRect(XVolInd + 175, YVolInd + 4, 48, 18, colorBatt);
-    tft.drawRect(XVolInd + 224, YVolInd + 8, 2, 10, colorBatt);
+    tft.drawRoundRect(XVolInd + 14, YVolInd + 1, tBatIconW, 22, 2, TFT_SILVER);
+    tft.fillRect(XVolInd + 14 + tBatIconW, YVolInd + 6, 4, 12, TFT_SILVER);
+    tft.fillRect(XVolInd + 16, YVolInd + 3, tBatIconW - 4, 18, TFT_BLACK);
+    int fillW = ((tBatIconW - 4) * bat) / 100;
+    if (fillW > 0) tft.fillRect(XVolInd + 16, YVolInd + 3, fillW, 18, colorBatt);
     tftPlSetFont(T1012_T);
     tftPlSetSize(1);
-    tftPlSetColor(TFT_WHITE, TFT_NAVY);
     tftPlSetDatum(BC_T);
     tftPlSetStyle(NRG_T);
-    if (batVolt) {
-      tftPlPrint(String(vsupply, 2) + "V", XVolInd + 199, YVolInd + 19);
-    } else {
-      int tmp = (46 - tftPlTextWidth(String(bat) + "%")) / 2;
-      tft.fillRect(XVolInd + 176, YVolInd + 5, tmp, 16, TFT_NAVY);
-      tft.fillRect(XVolInd + 221 - tmp, YVolInd + 5, tmp, 16, TFT_NAVY);
-      tftPlPrint(String(bat) + "%", XVolInd + 199, YVolInd + 19);
+    String batStr = batVolt ? (String(vsupply, 2) + "V") : (String(bat) + "%");
+    int tx = XVolInd + 14 + tBatIconW / 2, ty = YVolInd + 18;
+    tftPlSetColor(TFT_BLACK, TFT_TRANS);
+    for (int dx = -3; dx <= 3; dx++) {
+      for (int dy = -3; dy <= 3; dy++) {
+        if (dx != 0 or dy != 0) tftPlPrint(batStr, tx + dx, ty + dy);
+      }
+    }
+    tftPlSetColor(TFT_WHITE, TFT_TRANS);
+    tftPlPrint(batStr, tx, ty);
     }
   }
   if ((elapsedBat + 10000) < millis()) {
@@ -4168,37 +5819,64 @@ void Battery() {
 }
 
 void VolumeIndicator(int val) {
-
-  tft.setTextColor(TFT_WHITE, TFT_GREY);
+  tft.fillRect(XVolInd + 12, YVolInd + 24, tVolBarW + 4, 20, TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(1);
-  tft.setCursor(XVolInd + 57, YVolInd + 3);
-  tft.print("VOLUME");
-  val = map(val, MinVOL, MaxVOL, 0, 128);
-  tft.fillRect(XVolInd + 15, YVolInd + 16 , (2 + val), 6, TFT_GREEN);
-  tft.fillRect(XVolInd + 17 + val, YVolInd + 16 , 130 - (2 + val), 6, TFT_NAVY);
+  tft.setCursor(XVolInd + 12, YVolInd + 26);
+  tft.print("VOL");
+  val = map(val, MinVOL, MaxVOL, 0, tVolBarW);
+  tft.fillRect(XVolInd + 12, YVolInd + 37 , (2 + val), 6, TFT_GREEN);
+  tft.fillRect(XVolInd + 14 + val, YVolInd + 37 , tVolBarW - (2 + val), 6, TFT_NAVY);
 }
 
 void brightnessIndicator(int val) {
-
-  tft.setTextColor(TFT_WHITE, TFT_GREY);
-  tft.setTextSize(1);
-  tft.setCursor(XVolInd + 57, YVolInd + 3);
-  tft.print("BRIGHT");
-  val = map(val, MinBrightness, MaxBrightness, 0, 128);
-  tft.fillRect(XVolInd + 15, YVolInd + 16 , (2 + val), 6, TFT_CYAN);
-  tft.fillRect(XVolInd + 17 + val, YVolInd + 16 , 130 - (2 + val), 6, TFT_MAROON);
+  tft.fillRect(tFreqX + 2, tFreqY + 2, tFreqW - 4, tFreqH - 4, TFT_BLACK);
+  tftPlSetFont(T1012_T);
+  tftPlSetSize(1);
+  tftPlSetStyle(NRG_T);
+  tftPlSetDatum(BL_T);
+  tftPlSetColor(TFT_SILVER, TFT_TRANS);
+  tftPlPrint("JASNOŚĆ", tFreqX + 6, tFreqY + 16);
+  tftPlSetSize(3);
+  tftPlSetColor(TFT_WHITE, TFT_TRANS);
+  tftPlPrint(String(val), tFreqX + 6, tFreqY + 55);
+  drawDashboardCards();
 }
 
 void squelchIndicator(int val) {
-
-  tft.setTextColor(TFT_WHITE, TFT_GREY);
-  tft.setTextSize(1);
-  tft.setCursor(XVolInd + 57, YVolInd + 3);
-  tft.print("SQUELCH");
-  val = map(val, MinSQUELCH, MaxSQUELCH, 0, 128);
-  tft.fillRect(XVolInd + 15, YVolInd + 16 , (2 + val), 6, TFT_ORANGE);
-  tft.fillRect(XVolInd + 17 + val, YVolInd + 16 , 130 - (2 + val), 6, TFT_MAROON);
+  tft.fillRect(tFreqX + 2, tFreqY + 2, tFreqW - 4, tFreqH - 4, TFT_BLACK);
+  tftPlSetFont(T1012_T);
+  tftPlSetSize(1);
+  tftPlSetStyle(NRG_T);
+  tftPlSetDatum(BL_T);
+  tftPlSetColor(TFT_SILVER, TFT_TRANS);
+  tftPlPrint("SQUELCH", tFreqX + 6, tFreqY + 16);
+  tftPlSetSize(3);
+  tftPlSetColor(TFT_WHITE, TFT_TRANS);
+  tftPlPrint(String(val), tFreqX + 6, tFreqY + 55);
+  drawDashboardCards();
   }
+
+void updateAdaptiveSquelch(int reading) {
+  if (!squelchAdaptiveOn or SQUELCHbut) return;
+
+  unsigned long now = millis();
+  if (now - squelchAdaptElapsed < squelchAdaptInterval) return;
+  squelchAdaptElapsed = now;
+
+  if (!squelchNoiseFloorInit) {
+    squelchNoiseFloorF = min(reading, currentSquelch);
+    squelchNoiseFloorInit = true;
+  } else if (reading < currentSquelch) {
+    squelchNoiseFloorF += (reading - squelchNoiseFloorF) * squelchAdaptAlpha;
+  }
+  squelchNoiseFloor = (int)round(squelchNoiseFloorF);
+
+  int newSquelch = squelchNoiseFloor + squelchAdaptMargin;
+  if (newSquelch < MinSQUELCH) newSquelch = MinSQUELCH;
+  if (newSquelch > MaxSQUELCH) newSquelch = MaxSQUELCH;
+  currentSquelch = newSquelch;
+}
 
 void saver() {
 
@@ -4228,6 +5906,8 @@ void saver() {
   while (((pressed == false) and (encoderCount == 0) and (encoderButton == 0) and (analogRead(ENCODER_SWITCH) > 500)) or (writingEeprom)) {
     pressed = tft.getTouch(&x, &y);
     if (webServerRunning) webServer.handleClient();
+    if (webServerRunning) ArduinoOTA.handle();
+    serialPoll();
     if (saverOn) {
       if ((millis() - elapsedSaverMove) > 40) {
         elapsedSaverMove = millis();
@@ -4398,6 +6078,13 @@ void returnLayer() {
 
 void loop() {
 
+  if (otaInProgress) {
+    if (webServerRunning) ArduinoOTA.handle();
+    return;
+  }
+
+  serialPoll();
+
   unsigned long now = millis();
   if (((FirstLayer == true) or (ThirdLayer == true)) and (bright == false ) and (squelch == false )) VolumeIndicator(si4735.getVolume());
   if ((ThirdLayer == true) and (bright)) brightnessIndicator(currentBrightness);
@@ -4410,6 +6097,7 @@ void loop() {
     } else {
       SignalQuality = si4735.getCurrentSNR();
     }
+    updateAdaptiveSquelch(SignalQuality);
     if (SignalQuality >= currentSquelch){
       if (SCANpause == true) {
         si4735.setAudioMute(audioMuteOff);
@@ -4425,6 +6113,22 @@ void loop() {
   while (((pressed == false) and (encoderCount == 0) and (encoderButton == 0) and (analogRead(ENCODER_SWITCH) > 500)) or (writingEeprom)) {
     pressed = tft.getTouch(&x, &y);
     if (webServerRunning) webServer.handleClient();
+    if (webServerRunning) ArduinoOTA.handle();
+    if (webServerOn and wifiEnable and strlen(storage.wifiSSID)) {
+      static unsigned long lastWifiCheck = 0;
+      if (millis() - lastWifiCheck > 15000) {
+        lastWifiCheck = millis();
+        if (wifiConnected and WiFi.status() != WL_CONNECTED) {
+          wifiConnected = false;
+          disableWebServer();
+          WiFi.reconnect();
+        } else if (!wifiConnected and WiFi.status() == WL_CONNECTED) {
+          wifiConnected = true;
+          enableWebServer();
+        }
+      }
+    }
+    serialPoll();
 	if (saverDisableOnScan and SCANbut) elapsedSaver = millis();
     if ((elapsedSaver + ((unsigned long)saverTime * 1000)) < millis() and (saverOn or displayOff)) saver();
     showtimeRSSI();
@@ -4513,10 +6217,18 @@ void loop() {
     }
     if (MEMOadd) {
       if (posMemoName == 20) {
+        bool memoSaveOk = true;
+        if (memoConfirmOverwrite) {
+          memoConfirmOverwrite = false;
+          memoSaveOk = (confirm("NADPISAĆ STACJĘ?") == 1);
+          drawList(L_MEMO, "PAMIĘĆ");
+        }
         MEMOadd = false;
-        MemoBank[currentMemo].freq = addMemoFreq;
-        MemoBank[currentMemo].band = addMemoBand;
-        for (int i = 0; i < 21; i++) MemoBank[currentMemo].Name[i] = addMemoName[i];
+        if (memoSaveOk) {
+          MemoBank[currentMemo].freq = addMemoFreq;
+          MemoBank[currentMemo].band = addMemoBand + (addMemoMode * 32);
+          for (int i = 0; i < 21; i++) MemoBank[currentMemo].Name[i] = addMemoName[i];
+        }
         drawButtons(L_MEMO);
         displMEMO();
       } else {
@@ -4543,7 +6255,7 @@ void loop() {
   }
   elapsedSaver = millis();
 
-  if (pressed and (FirstLayer or ThirdLayer) and x > 0 and x < 139 and y > 20 and y < 68) {
+  if (pressed and (FirstLayer or ThirdLayer) and x > tFreqX and x < (tFreqX + tFreqW/3) and y > tFreqY and y < (tFreqY + tFreqH)) {
     unsigned long holdStart = millis();
     bool stillTouching = true;
     while (stillTouching and (millis() - holdStart) < 600) {
@@ -4560,7 +6272,7 @@ void loop() {
     pressed = false; x = y = 0;
   }
 
-  if (pressed and !screenLocked and (FirstLayer or ThirdLayer) and x > 220 and y > 20 and y < 68) {
+  if (pressed and !screenLocked and (FirstLayer or ThirdLayer) and x > (tFreqX + 2*tFreqW/3) and x < (tFreqX + tFreqW) and y > tFreqY and y < (tFreqY + tFreqH)) {
     unsigned long holdStart = millis();
     bool stillTouching = true;
     while (stillTouching and (millis() - holdStart) < 600) {
@@ -4573,7 +6285,7 @@ void loop() {
     pressed = false; x = y = 0;
   }
 
-  if (pressed and !screenLocked and (FirstLayer or ThirdLayer) and x > 139 and x < 219 and y > 20 and y < 68
+  if (pressed and !screenLocked and (FirstLayer or ThirdLayer) and x > (tFreqX + tFreqW/3) and x < (tFreqX + 2*tFreqW/3) and y > tFreqY and y < (tFreqY + tFreqH)
       and currentMode != LSB and currentMode != USB and currentMode != CW and !STEPbut and !VOLbut and !bfoOn) {
     cycleStep();
     pressed = false; x = y = 0;
@@ -4583,23 +6295,28 @@ void loop() {
     encoderCount = 0;
   }
 
-  if (pressed and !screenLocked and (FirstLayer or ThirdLayer) and x > Xsmtr and x < (Xsmtr + 240) and y > (Ysmtr + 6) and y < (Ysmtr + 52)) {
+  if (pressed and !screenLocked and (FirstLayer or ThirdLayer) and x > Xsmtr and x < (Xsmtr + tSigW) and y > Ysmtr and y < (Ysmtr + tSigH)) {
     unsigned long holdStart = millis();
     bool stillTouching = true;
     while (stillTouching and (millis() - holdStart) < 600) {
       stillTouching = tft.getTouch(&x, &y);
     }
-    Beep(1, 0);
+    unsigned long heldMs = millis() - holdStart;
     if (stillTouching) {
+      Beep(1, 0);
       priorityOn = !priorityOn;
       drawPriorityIndicator();
+    } else if (heldMs >= 300) {
+      Beep(2, 80);
+      savePriorityTarget(true);
     } else {
-      savePriorityTarget();
+      Beep(1, 0);
+      savePriorityTarget(false);
     }
     pressed = false; x = y = 0;
   }
 
-  if (pressed and !screenLocked and (FirstLayer or ThirdLayer) and x > 163 and x < 225 and y > 58 and y < 68) {
+  if (pressed and !screenLocked and (FirstLayer or ThirdLayer) and tStatusY > 0 and x > 167 and x < 229 and y > tStatusY and y < (tStatusY + 14)) {
     unsigned long holdStart = millis();
     bool stillTouching = true;
     while (stillTouching and (millis() - holdStart) < 600) {
@@ -4645,7 +6362,7 @@ void loop() {
         x = y = 0;
       }
 
-      if (( x > XVolInd + 161) and (x < XVolInd + 237) and (y > YVolInd - 1) and (y < YVolInd + 26)) {
+      if (( x > XVolInd + 8) and (x < XVolInd + 60) and (y > YVolInd) and (y < YVolInd + 20)) {
         Beep(1, 0);
         delay(200);
         batVolt = !batVolt;
@@ -4727,7 +6444,7 @@ void loop() {
               drawButton(L_FIRST, B_AGC, B_NORMAL);
             } else AGCgain = 1;
             checkAGC();
-            AGCfreqdisp();
+            FreqDispl();
           }
 
           if (n == B_HAM) {
@@ -5053,11 +6770,19 @@ void loop() {
                 drawButton(L_MEMO, 0, B_NORMAL);
                 drawButton(L_MEMO, 3, B_NORMAL);
                 if (MEMOadd) {
+                  bool memoSaveOk = true;
+                  if (memoConfirmOverwrite) {
+                    memoConfirmOverwrite = false;
+                    memoSaveOk = (confirm("NADPISAĆ STACJĘ?") == 1);
+                    drawList(L_MEMO, "PAMIĘĆ");
+                  }
                   MEMOadd = false;
                   drawButton(L_MEMO, 1, B_NORMAL);
-                  MemoBank[currentMemo].freq = addMemoFreq;
-                  MemoBank[currentMemo].band = addMemoBand + (addMemoMode * 32);
-                  for (int i = 0; i < 21; i++) MemoBank[currentMemo].Name[i] = addMemoName[i];
+                  if (memoSaveOk) {
+                    MemoBank[currentMemo].freq = addMemoFreq;
+                    MemoBank[currentMemo].band = addMemoBand + (addMemoMode * 32);
+                    for (int i = 0; i < 21; i++) MemoBank[currentMemo].Name[i] = addMemoName[i];
+                  }
                 } else {
                   MEMOdel = false;
                   drawButton(L_MEMO, 2, B_NORMAL);
@@ -5071,6 +6796,7 @@ void loop() {
                   ErrorBeep();
                 } else {
                   MEMOadd = true;
+                  memoConfirmOverwrite = false;
                   drawButton(L_MEMO, 0, B_NORMAL, "OK");
                   drawButton(L_MEMO, 3, B_NORMAL, "X");
                   drawButton(L_MEMO, 1, B_SELECT);
@@ -5088,6 +6814,7 @@ void loop() {
             if (n == 1 and !presetBank) {
               if (!MEMOadd and !MEMOdel) {
                 MEMOadd = true;
+                memoConfirmOverwrite = (MemoBank[currentMemo].freq >= 153 and MemoBank[currentMemo].freq <= 30000);
                 drawButton(L_MEMO, 0, B_NORMAL, "OK");
                 drawButton(L_MEMO, 3, B_NORMAL, "X");
                 drawButton(L_MEMO, 1, B_SELECT);
@@ -5134,6 +6861,7 @@ void loop() {
                 drawButtons(L_MEMO);
                 MEMOadd = false;
                 MEMOdel = false;
+                memoConfirmOverwrite = false;
                 displMEMO();
               } else {
                 MEMObut = false;
@@ -5146,7 +6874,7 @@ void loop() {
       }
 
       if (SETUPbut) {
-        if (x > (!screenV * 5) and x < (240 + (!screenV * 5)) and y > 40 and y < 200) {
+        if (x > (!screenV * 5) and x < (240 + (!screenV * 5)) and y > 40 and y < (screenV ? 238 : 200)) {
           Beep(1, 0);
           changeSETUP(int((y - 20) / 32));
           displSETUP();
@@ -5516,10 +7244,24 @@ void loop() {
                     } else {
 
                       if (DisplayfreqNew < 153) currentFrequency = DisplayfreqNew * 1000; else currentFrequency = DisplayfreqNew;
-                      for (int q = 1 ; q <= lastBand; q++) {
-                        if (((currentFrequency) >= band[q].minimumFreq) and ((currentFrequency) <= band[q].maximumFreq)) {
-                          bandIdx = q;
-                          currentMode = band[q].prefmod;
+                      {
+                        // Wybieramy NAJWEZSZY (najbardziej szczegolowy) pasujacy zakres pasma zamiast
+                        // pierwszego trafienia - np. 800M/630M sa w calosci zawarte w szerszym LW
+                        // i przy pierwszym-trafieniu-wygrywa nigdy nie zostalyby wybrane.
+                        int matchedBand = -1;
+                        uint32_t bestWidth = 0xFFFFFFFF;
+                        for (int q = 1 ; q <= lastBand; q++) {
+                          if (((currentFrequency) >= band[q].minimumFreq) and ((currentFrequency) <= band[q].maximumFreq)) {
+                            uint32_t width = (uint32_t)band[q].maximumFreq - band[q].minimumFreq;
+                            if (width < bestWidth) {
+                              bestWidth = width;
+                              matchedBand = q;
+                            }
+                          }
+                        }
+                        if (matchedBand >= 0) {
+                          bandIdx = matchedBand;
+                          currentMode = band[bandIdx].prefmod;
                           if (((band[bandIdx].bandType == MW_BAND_TYPE) or (band[bandIdx].bandType == LW_BAND_TYPE)) and ( currentMode == AM)) {
                             ssIdxMW = band[bandIdx].currentStep;
                           }
@@ -5531,7 +7273,6 @@ void loop() {
                           if (currentMode == FM) {
                             ssIdxFM = band[bandIdx].currentStep;
                           }
-                          break;
                         }
                       }
                       delay(100);
@@ -5582,7 +7323,7 @@ void loop() {
         }
         x = y = 0;
       }
-      if (( x > XVolInd + 161) and (x < XVolInd + 237) and (y > YVolInd - 1) and (y < YVolInd + 26)) {
+      if (( x > XVolInd + 8) and (x < XVolInd + 60) and (y > YVolInd) and (y < YVolInd + 20)) {
         Beep(1, 0);
         delay(200);
         batVolt = !batVolt;
@@ -5743,6 +7484,10 @@ void loop() {
             prevwebServerOn = webServerOn;
             prevanalogMeterOn = analogMeterOn;
             prevnightModeOn = nightModeOn;
+            prevthemeIdx = themeIdx;
+            prevsquelchAdaptiveOn = squelchAdaptiveOn;
+            prevrttyDecoderOn = rttyDecoderOn;
+            prevbatVolt = batVolt;
             prevscreenV = screenV;
             prevdisplayPower = displayPower;
             prevRDSalways = RDSalways;
@@ -5750,6 +7495,8 @@ void loop() {
             prevwifiEnable = wifiEnable;
             prevwifiConfigureNow = false;
             prevresetWifiConfig = false;
+            prevscanStopSeconds = scanStopSeconds;
+            prevcloseCallOn = closeCallOn;
 
             displSETUP();
             ThirdLayer = false;
@@ -5815,14 +7562,18 @@ void loop() {
                   si4735.setSeekAmLimits(band[bandIdx].minimumFreq, band[bandIdx].maximumFreq);
                 }
               }
+              si4735.setAudioMute(audioMuteOn);
               si4735.seekStationProgress(SeekFreq, checkStopSeeking,  SEEK_UP);
+              si4735.setAudioMute(audioMuteOff);
               delay(300);
               SEEK = false;
+              dashFreqVfo = "";
+              tft.fillRect(tRdsX + 3, tRdsY + 2, tRdsW - 6, tRdsH - 4, TFT_BLACK);
               drawButton(L_THIRD, B_SEEKUP, B_NORMAL);
               currentFrequency = si4735.getFrequency();
               band[bandIdx].currentFreq = currentFrequency ;
               previousFrequency = currentFrequency;
-              FreqDraw(currentFrequency, 0);
+              FreqDispl();
               delay(300);
           }
 
@@ -5840,14 +7591,18 @@ void loop() {
                   si4735.setSeekAmLimits(band[bandIdx].minimumFreq, band[bandIdx].maximumFreq);
                 }
               }
+              si4735.setAudioMute(audioMuteOn);
               si4735.seekStationProgress(SeekFreq, checkStopSeeking,  SEEK_DOWN);
+              si4735.setAudioMute(audioMuteOff);
               delay(300);
               SEEK = false;
+              dashFreqVfo = "";
+              tft.fillRect(tRdsX + 3, tRdsY + 2, tRdsW - 6, tRdsH - 4, TFT_BLACK);
               drawButton(L_THIRD, B_SEEKDN, B_NORMAL);
               currentFrequency = si4735.getFrequency();
               band[bandIdx].currentFreq = currentFrequency ;
               previousFrequency = currentFrequency;
-              FreqDraw(currentFrequency, 0);
+              FreqDispl();
               delay(300);
           }
 
@@ -6069,15 +7824,22 @@ void VOLbutoff()  {
 
 void DisplayRDS()  {
 
+  static bool rdsWasShowing = false;
   if (( currentMode == FM) and ((FirstLayer) or (ThirdLayer))) {
     if ( currentFrequency != previousFrequency ) {
       previousFrequency = currentFrequency;
-      tft.fillRect(XFreqDispl + 70, YFreqDispl + 57, 115, 16, TFT_BLACK);
-      tft.fillRect(0, YFreqDispl + 75, 242, 16, TFT_BLACK);
-
+      tft.fillRect(tRdsX + 3, tRdsY + 2, tRdsW - 6, tRdsH - 4, TFT_BLACK);
+      rdsWasShowing = false;
+      dashLastStationShown = ""; dashLastMsgShown = "";
     }
-    if ((RDS) and  (NewSNR >= 9) and !VOLbut and !AGCgainbut) checkRDS();
-    else tft.fillRect(XFreqDispl + 70, YFreqDispl + 57, 115, 16, TFT_BLACK);
+    if ((RDS) and  (NewSNR >= 9) and !VOLbut and !AGCgainbut) {
+      checkRDS();
+      rdsWasShowing = true;
+    } else if (rdsWasShowing) {
+      tft.fillRect(tRdsX + 3, tRdsY + 2, tRdsW - 6, tRdsH - 4, TFT_BLACK);
+      rdsWasShowing = false;
+      dashLastStationShown = ""; dashLastMsgShown = "";
+    }
 
   }
 }
@@ -6095,6 +7857,7 @@ void showtimeRSSI() {
     } else {
       SignalQuality = NewSNR;
     }
+    updateAdaptiveSquelch(SignalQuality);
     if (!Mutestat) {
       if (SignalQuality >= currentSquelch){
         if (SCANpause == true) {
@@ -6116,12 +7879,13 @@ void showtimeRSSI() {
 
 void DisplayClock() {
 
-if ((  currentMode == FM ) or (band[bandIdx].bandType == MW_BAND_TYPE) or (band[bandIdx].bandType == LW_BAND_TYPE)and ((FirstLayer) or (SecondLayer) or (ThirdLayer))) {
+if ((FirstLayer) or (SecondLayer) or (ThirdLayer)) {
   if ((FirstLayer or ThirdLayer) and !PRESbut) {
-  if(!getLocalTime(&timeinfo, 5)){
+  if (millis() - dashLastClockDraw < 1000) return;
+  dashLastClockDraw = millis();
+  if(!getLocalTime(&timeinfo, 100)){
     return;
   }
-  tft.fillRect(0, 23, 55, 33, TFT_BLACK);
 
   char timeHour[3];
   strftime(timeHour,3, "%H", &timeinfo);
@@ -6144,19 +7908,28 @@ if ((  currentMode == FM ) or (band[bandIdx].bandType == MW_BAND_TYPE) or (band[
    char timeYear[5];
    strftime(timeYear,5, "%Y", &timeinfo);
 
+    String hmStr = String(timeHour)+":"+String(timeMin);
+    String dateStr = String(timeDay)+"/"+String(timeMonth)+"/"+String(timeYear);
+    if (hmStr == dashLastHmStr and dateStr == dashLastDateStr) return;
+    dashLastHmStr = hmStr; dashLastDateStr = dateStr;
+
+  tft.fillRect(tClkX + 2, tClkY + 2, tClkW - 4, tClkH - 4, TFT_BLACK);
+
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setTextSize(2);
+    tft.setTextSize(3);
     tft.setTextDatum(TL_DATUM);
     tft.setTextPadding(0);
-    tft.drawString(String(timeHour)+":"+String(timeMin),XFreqDispl + 3,XFreqDispl + 25);
+    tft.setTextSize(tClkH >= 45 ? 3 : 2);
+    tft.drawString(hmStr, tClkX + 4, tClkY + 8);
 
     tft.setTextColor(TFT_GOLD, TFT_BLACK);
     tft.setTextSize(1);
     tft.setTextDatum(TL_DATUM);
     tft.setTextPadding(0);
 
-     tft.drawString(String(timeDay)+" / "+String(timeMonth),XFreqDispl + 8,XFreqDispl + 47);
-     tft.drawString(String(timeYear),XFreqDispl + 18,XFreqDispl + 60);
+     tft.drawString(dateStr, tClkX + 6, tClkY + tClkH - 10);
+
+    drawStopwatch();
 
  }
  }
@@ -6168,45 +7941,38 @@ void showRSSI() {
     if (RETRObut) {
       int d = screenV * 80;
       if (si4735.getCurrentPilot()) tft.fillRect(298 - d, 25, 14, 5, TFT_RED); else tft.fillRect(298 - d, 25, 14, 5, TFT_BLACK);
-    } else {
-      sprintf(buffer, "%s", (si4735.getCurrentPilot()) ? "STEREO" : "MONO");
-      tft.setTextColor(TFT_WHITE, TFT_RED);
-      tft.setTextSize(1);
-      tft.setTextDatum(BC_DATUM);
-      tft.setTextPadding(0);
-      tft.fillRect(XFreqDispl + 195, YFreqDispl + 25 , 38, 12, TFT_RED);
-      tft.drawString(buffer, XFreqDispl + 214, YFreqDispl + 36);
     }
   }
 
   rssi = NewRSSI;
+  if (cwDecoderOn) {
+    processCWEvents();
+    if ((FirstLayer or ThirdLayer) and !SecondLayer) drawCWDecoderView();
+  } else if (rttyDecoderOn) {
+    processRTTYEvents();
+    if ((FirstLayer or ThirdLayer) and !SecondLayer) drawRttyDecoderView();
+  }
   if ((FirstLayer) or (ThirdLayer)) {
-    if (cwDecoderOn) {
-      processCWEvents();
-      drawCWDecoderView();
-    } else if (analogMeterOn) {
+    if (analogMeterOn) {
       drawAnalogMeter();
     } else if (rssiHistoryOn) {
       updateRssiHistory(rssi);
       SmeterHistory();
     } else {
-      Smeter();
+      drawDashboardSignal();
     }
   }
   if ((  currentMode == AM ) or (  currentMode == LSB )or  (  currentMode == USB )or (  currentMode == CW )and ((FirstLayer) or (ThirdLayer) or (SecondLayer and RETRObut and !RETROband)))
     {
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  if ((FirstLayer or ThirdLayer) and !PRESbut) {
-    tft.setTextDatum(TL_DATUM);
-    tft.drawString("RSSI " + String(NewRSSI) + " dBuV " , XFreqDispl + 8, YFreqDispl + 75);
-    tft.setTextDatum(TR_DATUM);
-    tft.drawString(" SNR " + String(NewSNR) + " dB", XFreqDispl + 180, YFreqDispl + 75);
-    }
   }
   VOLbutoff();
   DisplayClock();
 }
+
+#define ENCODER_ACCEL_FAST_MS   30
+#define ENCODER_ACCEL_MED_MS    80
+#define ENCODER_ACCEL_FAST_STEPS 4
+#define ENCODER_ACCEL_MED_STEPS  2
 
 void encoderCheck()  {
 
@@ -6441,6 +8207,7 @@ void encoderCheck()  {
       } else {
         SignalQuality = si4735.getCurrentSNR();
       }
+      updateAdaptiveSquelch(SignalQuality);
       if (SignalQuality >= currentSquelch){
         if (SCANpause == true) {
           si4735.setAudioMute(audioMuteOff);
@@ -6486,10 +8253,19 @@ void encoderCheck()  {
         band[bandIdx].lastBFO = currentBFO;
         checkAGC();
       } else  {
-        if (encoderCount == 1) {
-          si4735.frequencyUp();
-        } else {
-          si4735.frequencyDown();
+        static unsigned long lastTuneEncMs = 0;
+        unsigned long nowTuneMs = millis();
+        unsigned long tuneGapMs = nowTuneMs - lastTuneEncMs;
+        lastTuneEncMs = nowTuneMs;
+        int accelSteps = 1;
+        if (tuneGapMs < ENCODER_ACCEL_FAST_MS) accelSteps = ENCODER_ACCEL_FAST_STEPS;
+        else if (tuneGapMs < ENCODER_ACCEL_MED_MS) accelSteps = ENCODER_ACCEL_MED_STEPS;
+        for (int accelI = 0; accelI < accelSteps; accelI++) {
+          if (encoderCount == 1) {
+            si4735.frequencyUp();
+          } else {
+            si4735.frequencyDown();
+          }
         }
       }
       band[bandIdx].currentFreq = si4735.getFrequency();
@@ -6508,7 +8284,26 @@ void encoderButtonCheck()  {
   if (analogRead(ENCODER_SWITCH) < 500 and (ThirdLayer or FirstLayer or SecondLayer)) {
       Beep(1, 0);
       long encTime = millis() + 1000;
-      while (analogRead(ENCODER_SWITCH) < 500 and encTime > millis());
+      encoderCount = 0;
+      while (analogRead(ENCODER_SWITCH) < 500 and encTime > millis()) {
+        if (encoderCount != 0 and !SCANbut and !bfoOn and !RETRObut and !cityRETRObut and !bandRETRObut and
+            !PRESbut and !bright and !SQUELCHbut and !VOLbut and !AGCgainbut and !SETUPbut and !MEMObut and
+            currentMode != LSB and currentMode != USB and currentMode != CW) {
+          si4735.setFrequencyStep(1);
+          while (analogRead(ENCODER_SWITCH) < 500) {
+            if (encoderCount == 1) si4735.frequencyUp();
+            else if (encoderCount == -1) si4735.frequencyDown();
+            encoderCount = 0;
+            band[bandIdx].currentFreq = si4735.getFrequency();
+            FreqDispl();
+          }
+          si4735.setFrequencyStep(band[bandIdx].currentStep);
+          band[bandIdx].currentFreq = si4735.getFrequency();
+          encoderCount = 0;
+          encoderButton = 0;
+          return;
+        }
+      }
       if (analogRead(ENCODER_SWITCH) < 500) {
 
        Beep(1, 0);
@@ -6648,14 +8443,18 @@ void encoderButtonCheck()  {
                   si4735.setSeekAmLimits(band[bandIdx].minimumFreq, band[bandIdx].maximumFreq);
                 }
               }
+              si4735.setAudioMute(audioMuteOn);
               si4735.seekStationProgress(SeekFreq, checkStopSeeking,  SEEK_DOWN);
+              si4735.setAudioMute(audioMuteOff);
               delay(300);
               SEEK = false;
+              dashFreqVfo = "";
+              tft.fillRect(tRdsX + 3, tRdsY + 2, tRdsW - 6, tRdsH - 4, TFT_BLACK);
               if (ThirdLayer) drawButton(L_THIRD, B_SEEKDN, B_NORMAL);
               currentFrequency = si4735.getFrequency();
               band[bandIdx].currentFreq = currentFrequency ;
               previousFrequency = currentFrequency;
-              FreqDraw(currentFrequency, 0);
+              FreqDispl();
               delay(300);
             }
           } else {
@@ -6675,14 +8474,18 @@ void encoderButtonCheck()  {
                   si4735.setSeekAmLimits(band[bandIdx].minimumFreq, band[bandIdx].maximumFreq);
                 }
               }
+              si4735.setAudioMute(audioMuteOn);
               si4735.seekStationProgress(SeekFreq, checkStopSeeking,  SEEK_UP);
+              si4735.setAudioMute(audioMuteOff);
               delay(300);
               SEEK = false;
+              dashFreqVfo = "";
+              tft.fillRect(tRdsX + 3, tRdsY + 2, tRdsW - 6, tRdsH - 4, TFT_BLACK);
               if (ThirdLayer) drawButton(L_THIRD, B_SEEKUP, B_NORMAL);
               currentFrequency = si4735.getFrequency();
               band[bandIdx].currentFreq = currentFrequency ;
               previousFrequency = currentFrequency;
-              FreqDraw(currentFrequency, 0);
+              FreqDispl();
               delay(300);
             }
           }
@@ -6859,16 +8662,29 @@ void Beep(int cnt, int tlb) {
   }
 }
 
+void drawDashboardCards() {
+  tft.drawRoundRect(tFreqX, tFreqY, tFreqW, tFreqH, 4, TFT_CYAN);
+  tft.drawRoundRect(Xsmtr - 3, Ysmtr - 3, tSigW, tSigH, 4, TFT_CYAN);
+  tft.drawRoundRect(tClkX, tClkY, tClkW, tClkH, 4, TFT_CYAN);
+  tft.drawRoundRect(tBatX, tBatY, tBatW, tBatH, 4, TFT_CYAN);
+  tft.drawRoundRect(tRdsX, tRdsY, tRdsW, tRdsH, 4, TFT_CYAN);
+}
+
+void clearLayerBg() {
+  int topBlockBottom = max(tFreqY + tFreqH, Ysmtr + tSigH);
+  tft.fillRect(0, topBlockBottom, tft.width(), tft.height() - topBlockBottom, TFT_BLACK);
+}
+
 void DrawFila()   {
 
   FirstLayer = true;
   SecondLayer = false;
-  tft.fillScreen(TFT_BLACK);
+  clearLayerBg();
+  resetDashboardRedrawTrackers();
   DrawButFila();
   DrawDispl();
   DrawSmeter();
-  DrawVolumeIndicator();
-  DrawBatteryIndicator();
+  drawDashboardCards();
   elapsedBat = 0;
 }
 
@@ -6876,12 +8692,12 @@ void DrawThla()  {
 
   ThirdLayer = true;
   ForthLayer = false;
-  tft.fillScreen(TFT_BLACK);
+  clearLayerBg();
+  resetDashboardRedrawTrackers();
   DrawButThla();
   DrawDispl();
   DrawSmeter();
-  DrawVolumeIndicator();
-  DrawBatteryIndicator();
+  drawDashboardCards();
   elapsedBat = 0;
 }
 
@@ -6916,28 +8732,99 @@ void DrawButThla() {
   if (displayPower) drawButton(L_THIRD, B_LIGHT, B_BLOCK);
 }
 
-void DrawVolumeIndicator()  {
-
-  tft.setTextSize(1);
-  tft.fillRect(XVolInd + 2, YVolInd - 1, 157, 28, TFT_GREY);
-  tft.setTextColor(TFT_WHITE, TFT_GREY);
-  tft.setCursor(XVolInd +  11, YVolInd + 7);
-  tft.print("0%");
-  tft.setCursor(XVolInd + 126, YVolInd + 7);
-  tft.print("100%");
+uint16_t sigBarGradientColor(float t, float zoneFrac) {
+  if (t < 0) t = 0; if (t > 1) t = 1;
+  uint8_t r, g;
+  if (t < zoneFrac) {
+    float f = t / zoneFrac;
+    r = (uint8_t)(255 * f);
+    g = 255;
+  } else {
+    float f = (t - zoneFrac) / (1.0 - zoneFrac);
+    r = 255;
+    g = (uint8_t)(255 * (1.0 - f));
+  }
+  return tft.color565(r, g, 0);
 }
 
-void DrawBatteryIndicator()  {
+void drawDashboardSignal() {
+  static int smoothRssi = -1;
+  static int smoothSNR = -100;
+  static bool smoothPilot = false;
 
-  tft.fillRect(XVolInd + 161, YVolInd - 1, 77, 28, TFT_GREY);
-  if (batShow) tft.fillRect(XVolInd + 176, YVolInd + 5, 46, 16, TFT_NAVY);
+  if (smoothRssi < 0 or abs((int)rssi - smoothRssi) >= 2) smoothRssi = rssi;
+  if (smoothSNR < -50 or abs(NewSNR - smoothSNR) >= 2) smoothSNR = NewSNR;
+  bool pilotNow = si4735.getCurrentPilot();
+
+  String sLabel = rssiToSLabel(smoothRssi, currentMode == FM);
+  int level = rssiToMeterLevel(smoothRssi, currentMode == FM);
+  int barW = (level * 113) / 15;
+  String extra = "RSSI:" + String(smoothRssi) + "dBuV";
+													  
+																										 
+									
+  String topRight = "SNR:" + String(smoothSNR) + "dB";
+  String topLeft = (currentMode == FM) ? (pilotNow ? "STEREO" : "MONO") : "";
+
+  if (barW > dashSigPeakBarW) {
+    dashSigPeakBarW = barW;
+    dashSigPeakDecayMs = millis();
+  } else if (dashSigPeakBarW > barW and millis() - dashSigPeakDecayMs > DASH_SIG_PEAK_DECAY_MS) {
+    dashSigPeakDecayMs = millis();
+    dashSigPeakBarW--;
+  }
+
+  if (dashEverDrawnSig and sLabel == dashLastSLabel and barW == dashLastBarW and extra == dashLastExtra and topRight == dashLastTopRight and topLeft == dashLastTopLeft and dashSigPeakBarW == dashLastPeakBarW) return;
+  dashEverDrawnSig = true;
+  dashLastSLabel = sLabel; dashLastBarW = barW; dashLastExtra = extra; dashLastTopRight = topRight; dashLastTopLeft = topLeft;
+  dashLastPeakBarW = dashSigPeakBarW;
+
+  tft.fillRect(Xsmtr, Ysmtr, tSigW - 6, tSigH - 6, TFT_BLACK);
+  tftPlSetFont(T1012_T);
+  tftPlSetSize(1);
+  tftPlSetStyle(NRG_T);
+  tftPlSetDatum(BL_T);
+									   
+											   
+  if (topLeft.length() > 0) {
+    tftPlSetColor(pilotNow ? TFT_GREEN : TFT_SILVER, TFT_TRANS);
+    tftPlPrint(topLeft, Xsmtr + 6, Ysmtr + 16 + tSigTopLeftYOffset);
+  }
+  tftPlSetDatum(BR_T);
+  tftPlSetColor(TFT_SILVER, TFT_TRANS);
+  tftPlPrint(topRight, Xsmtr + tSigW - 12, Ysmtr + 16 + tSigTopRightYOffset);
+  tftPlSetDatum(BL_T);
+  tftPlSetSize(2);
+  tftPlSetColor(TFT_GREEN, TFT_TRANS);
+  int barTrackW = tSigW - 18;
+  int barY = Ysmtr + tSigH - 30 + tSigBarYOffset;
+  tftPlPrint(sLabel, Xsmtr + 8, barY - 8 + tSigLabelYOffset);
+  tft.fillRect(Xsmtr + 8, barY, barTrackW, 6, TFT_BLACK);
+  tft.drawRect(Xsmtr + 8, barY, barTrackW, 6, TFT_DARKGREY);
+  int barMax = barTrackW - 4;
+  barW = (barW * barMax) / 113;
+  if (barW > 0) {
+    const int segW = 2;
+    for (int x0 = 0; x0 < barW; x0 += segW) {
+      int w = min(segW, barW - x0);
+      float t = (barMax > 0) ? ((float)x0 / (float)barMax) : 0;
+      tft.fillRect(Xsmtr + 10 + x0, barY + 1, w, 4, sigBarGradientColor(t, 0.6));
+    }
+  }
+  int peakPx = (dashSigPeakBarW * barMax) / 113;
+  if (peakPx > barW + 2 and peakPx < barMax) {
+    tft.fillRect(Xsmtr + 10 + peakPx, barY + 1, 2, 4, TFT_WHITE);
+  }
+  tftPlSetSize(1);
+  tftPlSetColor(TFT_SKYBLUE, TFT_TRANS);
+  tftPlPrint(extra, Xsmtr + 6, Ysmtr + tSigH - 12 + tSigExtraYOffset);
 }
 
 void DrawSmeter()  {
 
-  if (cwDecoderOn) { drawCWDecoderView(); return; }
   if (analogMeterOn) { drawAnalogMeter(); return; }
   if (rssiHistoryOn) { SmeterHistory(); return; }
+  if (FirstLayer or ThirdLayer) { drawDashboardSignal(); return; }
   String IStr;
   tft.setTextSize(1);
   tft.fillRect(Xsmtr + 2, Ysmtr + 6, 236, 46, TFT_BLACK);
@@ -6964,12 +8851,14 @@ void DrawSmeter()  {
 }
 
 void SEEKdispl (int dir)  {
-
-  tft.setTextSize(2);
-  tft.setTextColor(TFT_RED, TFT_BLACK);
-  tft.setTextDatum(BL_DATUM);
-  tft.drawString("SEEK", XFreqDispl, YFreqDispl + 40);
-  if (dir) tft.drawString("<<<<", XFreqDispl, YFreqDispl + 60); else tft.drawString(">>>>", XFreqDispl, YFreqDispl + 60);
+  tft.fillRect(tFreqX + tFreqW - 72, tFreqY + 4, 68, 10, TFT_BLACK);
+  tftPlSetFont(T1012_T);
+  tftPlSetSize(1);
+  tftPlSetStyle(NRG_T);
+  tftPlSetDatum(BR_T);
+  tftPlSetColor(TFT_RED, TFT_TRANS);
+  tftPlPrint("AUTO " + String(dir ? "<<<<" : ">>>>"), tFreqX + tFreqW - 6, tFreqY + 13);
+  tftPlSetDatum(BL_T);
 }
 
 void drawList(uint8_t lay, String text) {
@@ -6979,10 +8868,6 @@ void drawList(uint8_t lay, String text) {
   int d = 0;
   if (!screenV and !BroadBand and !FREQbut){
     d = 40;
-    for (int n = 1; n <= 20; n++) {
-      tft.fillRect(40 - (n * 2), 0, 2, 240, ((int(n / 2) * 4096) + (n * 32)));
-      tft.fillRect((n * 2) + 278, 0, 2, 240, ((int(n / 2) * 4096) + (n * 32)));
-    }
   }
   tft.fillRect(d, 0, 240, 20, TFT_GREY);
   tftPlSetSize(1);
@@ -6991,13 +8876,6 @@ void drawList(uint8_t lay, String text) {
   tftPlSetDatum(BC_T);
   tftPlSetColor(TFT_CYAN, TFT_GREY);
   tftPlPrint(text, 120 + d, 20);
-  if (lay == L_SETUP) {
-    spr.createSprite(265, 120);
-    spr.fillScreen(COLOR_BACKGROUND);
-    spr.pushImage(0, 0, 265, 120, (uint16_t *)logo);
-    if (screenV) spr.pushSprite(-25, 80); else spr.pushSprite(27, 80);
-    spr.deleteSprite();
-  }
   drawListBut(lay);
 }
 
@@ -7021,45 +8899,40 @@ void subrstatus() {
 
   tft.fillScreen(TFT_BLACK);
 
-  spr.createSprite(265, 120);
-  spr.fillScreen(COLOR_BACKGROUND);
-  spr.pushImage(0, 0, 265, 120, (uint16_t *)logo);
-  if (screenV) spr.pushSprite(-25, 0); else spr.pushSprite(27, 0);
-  spr.deleteSprite();
+  pushScaledDimmedImage(tft, 10, 0, 300, 170, (uint16_t *)logo, 300, 170, 0.3);
 
   tft.setTextDatum(TL_DATUM);
   tft.setTextSize(1);
-  tft.setCursor(0, 0);
-  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString("Software version V5.3b  17-09-2022 IU4ALH Mod", 5, 0);
-  tft.drawString("Mode     : " + String(bandModeDesc[band[bandIdx].prefmod]), 5, 10);
-  if ( currentMode != FM)  tft.drawString("Freq.    : " + String(currentFrequency, 0) + " KHz", 5, 20);
-  else tft.drawString("Freq.    : " + String(currentFrequency / 100, 1) + " MHz", 5, 20);
+
+  printOutlineText("github.com/roxio/ATS25x2-Polish-Project", 5, 0, TFT_YELLOW, TFT_BLACK, 2);
+  printOutlineText("Mode     : " + String(bandModeDesc[band[bandIdx].prefmod]), 5, 10, TFT_YELLOW, TFT_BLACK, 2);
+  if ( currentMode != FM)  printOutlineText("Freq.    : " + String(currentFrequency, 0) + " KHz", 5, 20, TFT_YELLOW, TFT_BLACK, 2);
+  else printOutlineText("Freq.    : " + String(currentFrequency / 100, 1) + " MHz", 5, 20, TFT_YELLOW, TFT_BLACK, 2);
   si4735.getCurrentReceivedSignalQuality();
-  tft.drawString("RSSI     : " + String(si4735.getCurrentRSSI()) + "dBuV", 5, 30);
-  tft.drawString("SNR      : " + String(si4735.getCurrentSNR()) + "uV", 5, 40);
+  printOutlineText("RSSI     : " + String(si4735.getCurrentRSSI()) + "dBuV", 5, 30, TFT_YELLOW, TFT_BLACK, 2);
+  printOutlineText("SNR      : " + String(si4735.getCurrentSNR()) + "uV", 5, 40, TFT_YELLOW, TFT_BLACK, 2);
   if (  currentMode == FM ) {
     sprintf(buffer, "%s", (si4735.getCurrentPilot()) ? "STEREO" : "MONO");
-    tft.drawString("         : " + String(buffer), 5, 50);
+    printOutlineText("         : " + String(buffer), 5, 50, TFT_YELLOW, TFT_BLACK, 2);
   }
   si4735.getAutomaticGainControl();
   si4735.getCurrentReceivedSignalQuality();
-  tft.drawString("LNA GAIN index: " + String(si4735.getAgcGainIndex()) + "/" + String(currentAGCgain), 5, 60);
-  tft.drawString("Volume   : )" + String(si4735.getVolume()), 5, 70);
+  printOutlineText("LNA GAIN index: " + String(si4735.getAgcGainIndex()) + "/" + String(currentAGCgain), 5, 60, TFT_YELLOW, TFT_BLACK, 2);
+  printOutlineText("Volume   : )" + String(si4735.getVolume()), 5, 70, TFT_YELLOW, TFT_BLACK, 2);
   sprintf(buffer, "%s", (si4735.isAgcEnabled()) ? "AGC ON " : "AGC OFF");
-  tft.drawString(buffer, 5, 80);
-  if (bfoOn) tft.drawString("BFO ON  ", 5, 90);
-  else tft.drawString("BFO OFF ", 5, 90);
-  tft.drawString("AVC max GAIN  : " + String(si4735.getCurrentAvcAmMaxGain()), 5, 100);
-  tft.drawString("Ant. Cap = " + String(si4735.getAntennaTuningCapacitor()) , 5, 110);
+  printOutlineText(buffer, 5, 80, TFT_YELLOW, TFT_BLACK, 2);
+  if (bfoOn) printOutlineText("BFO ON  ", 5, 90, TFT_YELLOW, TFT_BLACK, 2);
+  else printOutlineText("BFO OFF ", 5, 90, TFT_YELLOW, TFT_BLACK, 2);
+  printOutlineText("AVC max GAIN  : " + String(si4735.getCurrentAvcAmMaxGain()), 5, 100, TFT_YELLOW, TFT_BLACK, 2);
+  printOutlineText("Ant. Cap = " + String(si4735.getAntennaTuningCapacitor()) , 5, 110, TFT_YELLOW, TFT_BLACK, 2);
 
+  printOutlineText("Band          :  " + String(bandIdx) + "  " + String(band[bandIdx].bandName) , 5, 120, TFT_WHITE, TFT_BLACK, 2);
+  printOutlineText("Bandwidth SSB : " + String(bandwidthSSB[bwIdxSSB]) + " KHz", 5, 130, TFT_WHITE, TFT_BLACK, 2);
+  printOutlineText("Bandwidth AM  : " + String(bandwidthAM[bwIdxAM]) + " KHz", 5, 140, TFT_WHITE, TFT_BLACK, 2);
+  printOutlineText("Bandwidth FM  : " + String(bandwidthFM[bwIdxFM]) + " KHz", 5, 150, TFT_WHITE, TFT_BLACK, 2);
+  printOutlineText("Stepsize  MW  :   " + String(ssIdxMW) + " KHz", 5, 160, TFT_WHITE, TFT_BLACK, 2);
+  printOutlineText("Stepsize  AM  :   " + String(ssIdxAM) + " KHz", 5, 170, TFT_WHITE, TFT_BLACK, 2);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("Band          :  " + String(bandIdx) + "  " + String(band[bandIdx].bandName) , 5, 120);
-  tft.drawString("Bandwidth SSB : " + String(bandwidthSSB[bwIdxSSB]) + " KHz", 5, 130);
-  tft.drawString("Bandwidth AM  : " + String(bandwidthAM[bwIdxAM]) + " KHz", 5, 140);
-  tft.drawString("Bandwidth FM  : " + String(bandwidthFM[bwIdxFM]) + " KHz", 5, 150);
-  tft.drawString("Stepsize  MW  :   " + String(ssIdxMW) + " KHz", 5, 160);
-  tft.drawString("Stepsize  AM  :   " + String(ssIdxAM) + " KHz", 5, 170);
   tft.drawString("Stepsize SSB  :   " "1 KHz fixed", 5, 180);
   tft.drawString("Stepsize  FM  : " + String(ssIdxFM * 10) + " KHz", 5, 190);
 
@@ -7080,11 +8953,11 @@ void subrstatus() {
   elapsedSaver = millis();
 }
 
-void showRDSStation() {
+void showRDSStation(String stationNameCopy) {
 
   if ((FirstLayer) or (ThirdLayer)) {
-    tft.setCursor(XFreqDispl + 80, YFreqDispl + 58);
-    tft.print(stationName);
+    tft.setCursor(tRdsX + 7, tRdsY + 4 + tRdsStationYOffset);
+    tft.print(stationNameCopy);
   }
   delay(150);
 }
@@ -7118,10 +8991,28 @@ void printWrapped(String text, int x, int y, int maxWidth, int lineHeight) {
   }
 }
 
-void showrdsMsg() {
-
+void showrdsMsg(String rdsMsgCopy) {
   if ((FirstLayer) or (ThirdLayer)) {
-    printWrapped(rdsMsg, 0, YFreqDispl + 75, 235, 8);
+    int maxChars = 0;
+    int start = 0;
+    int len = rdsMsgCopy.length();
+    int lines = 0;
+    int maxLines = tRdsMsgLines;
+    while (start < len and lines < maxLines) {
+      int end = start;
+      int lastSpace = -1;
+      while (end < len) {
+        if (tft.textWidth(rdsMsgCopy.substring(start, end + 1)) > (tRdsW - 16) and end > start) break;
+        if (rdsMsgCopy.charAt(end) == ' ') lastSpace = end;
+        end++;
+      }
+      if (end >= len) { start = len; }
+      else if (lastSpace > start) { start = lastSpace + 1; }
+      else { start = end; }
+      lines++;
+    }
+    maxChars = start;
+    printWrapped(rdsMsgCopy.substring(0, maxChars), tRdsX + 8, tRdsY + tRdsMsgYOffset, tRdsW - 16, 9);
   }
   delay(100);
 }
@@ -7175,6 +9066,43 @@ void calcRDSTime() {
   }
 }
 
+bool rdsClockSynced = false;
+
+void syncClockFromRDS() {
+  if (rdsClockSynced) return;
+  if (rdsTime == NULL) return;
+  if (strlen(rdsTime) < 12) return;
+  if (time(nullptr) > 1600000000) { rdsClockSynced = true; return; }
+
+  int h  = (rdsTime[0] - '0') * 10 + (rdsTime[1] - '0');
+  int m  = (rdsTime[3] - '0') * 10 + (rdsTime[4] - '0');
+  int oh = (rdsTime[7] - '0') * 10 + (rdsTime[8] - '0');
+  int om = (rdsTime[10] - '0') * 10 + (rdsTime[11] - '0');
+  if (h < 0 or h > 23 or m < 0 or m > 59) return;
+  if (oh < 0 or oh > 23 or om < 0 or om > 59) return;
+
+  if (rdsTime[6] == '-') { h += oh; m += om; }
+  else { h -= oh; m -= om; }
+  while (m >= 60) { m -= 60; h++; }
+  while (m < 0)   { m += 60; h--; }
+  while (h >= 24) h -= 24;
+  while (h < 0)   h += 24;
+
+  time_t nowSec = time(nullptr);
+  struct tm lt;
+  localtime_r(&nowSec, &lt);
+  lt.tm_hour = h;
+  lt.tm_min  = m;
+  lt.tm_sec  = 0;
+  time_t newT = mktime(&lt);
+  if (newT <= 0) return;
+  struct timeval tv;
+  tv.tv_sec  = newT;
+  tv.tv_usec = 0;
+  settimeofday(&tv, NULL);
+  rdsClockSynced = true;
+}
+
 void checkRDS() {
 
   si4735.getRdsStatus();
@@ -7183,18 +9111,26 @@ void checkRDS() {
       stationName = si4735.getRdsText0A();
       rdsMsg = si4735.getRdsText2A();
       rdsTime = si4735.getRdsTime();
-      tft.setTextSize(2);
-      if (PRESbut) tft.setTextColor(TFT_CYAN, TFT_BLACK); else tft.setTextColor(TFT_CYAN, TFT_BLACK);
-      tft.setTextDatum(BC_DATUM);
-      if ( stationName != NULL )   showRDSStation();
+      rdsPTY = si4735.getRdsProgramType();
+      rdsPI = si4735.getRdsPI();
+      syncClockFromRDS();
+      if ( stationName != NULL and String(stationName) != dashLastStationShown) {
+        dashLastStationShown = String(stationName);
+        tft.setTextSize(2);
+        if (PRESbut) tft.setTextColor(TFT_CYAN, TFT_BLACK); else tft.setTextColor(TFT_CYAN, TFT_BLACK);
+        tft.setTextDatum(BC_DATUM);
+        showRDSStation(String(stationName));
+      }
 
-     tft.setTextSize(1);
-      tft.setTextColor(TFT_WHITE, TFT_BLACK);
-      tft.setTextDatum(BC_DATUM);
+      if ( rdsMsg != NULL and String(rdsMsg) != dashLastMsgShown) {
+        dashLastMsgShown = String(rdsMsg);
+        tft.setTextSize(1);
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.setTextDatum(BC_DATUM);
+        showrdsMsg(String(rdsMsg));
+      }
 
-      if ( rdsMsg != NULL )   showrdsMsg();
-
-       tft.setTextSize(1);
+      tft.setTextSize(1);
       tft.setTextColor(TFT_BLACK, TFT_BLACK);
       tft.setTextDatum(BC_DATUM);
 
@@ -7270,12 +9206,192 @@ void Segment(String freq, String mask, int d) {
  spr.deleteSprite();
 }
 
+void drawLockLabel(int fx, int fw, int rowBot) {
+  tft.fillRect(fx + fw - 50, rowBot - 12, 50, 14, TFT_BLACK);
+  tftPlSetFont(T1012_T);
+  tftPlSetStyle(NRG_T);
+  tftPlSetSize(1);
+  tftPlSetColor(TFT_RED, TFT_TRANS);
+  tftPlSetDatum(BR_T);
+  tftPlPrint("LOCK", fx + fw - 2, rowBot);
+  tftPlSetDatum(BL_T);
+}
+
+String volumeDbLabel(uint8_t vol) {
+  int db = map(vol, MinVOL, MaxVOL, -49, 49);
+  return (db > 0 ? String("+") : String("")) + String(db) + "dB";
+}
+
+void drawDashboardFreq() {
+  String freqStr, unit, decStr;
+  if (currentMode == FM) {
+    freqStr = String(si4735.getFrequency() / 100.0, 1);
+    unit = "MHz";
+  } else if (band[bandIdx].bandType == MW_BAND_TYPE or band[bandIdx].bandType == LW_BAND_TYPE) {
+    freqStr = String((long)si4735.getFrequency());
+    unit = "kHz";
+  } else if (currentMode == LSB or currentMode == USB or currentMode == CW) {
+    long disp = ((long)si4735.getFrequency() * 1000) - band[bandIdx].lastBFO;
+    String full = String(disp / 1000.0, 2);
+    int dot = full.indexOf('.');
+    if (dot >= 0) {
+      freqStr = full.substring(0, dot);
+      decStr = full.substring(dot);
+    } else {
+      freqStr = full;
+    }
+    unit = "kHz";
+  } else {
+    freqStr = String((long)si4735.getFrequency());
+    unit = "kHz";
+  }
+  const char* modeNamesDash[] = {"FM", "LSB", "USB", "AM", "CW"};
+  String topStr = String(band[bandIdx].bandName) + " " + String(modeNamesDash[currentMode]);
+  String bw;
+  if (currentMode == AM) bw = bandwidthAM[bwIdxAM];
+  else if (currentMode == LSB or currentMode == USB or currentMode == CW) bw = bandwidthSSB[bwIdxSSB];
+  else bw = bandwidthFM[bwIdxFM];
+  String stepStr = (currentMode == FM) ? String(band[bandIdx].currentStep * 10) : String(band[bandIdx].currentStep);
+  String botStr = unit + "  " + (bw == "AUTO" ? "F AUTO" : "F" + bw + "K") + "  " + stepStr + "K";
+
+  tftPlSetFont(T1012_T);
+  tftPlSetStyle(NRG_T);
+  tftPlSetDatum(BL_T);
+
+  int fx = tFreqX + 4, fw = tFreqW - 8;
+  int rowTop = tFreqY + 4;
+  int rowBot = tFreqY + tFreqH - 14 + tFreqBotYOffset;
+  int digitsY = tFreqY + tFreqH - 24 + tFreqDigitYOffset;
+
+  if (topStr != dashFreqTop) {
+    dashFreqTop = topStr;
+    tft.fillRect(fx, rowTop, fw - 70, 10, TFT_BLACK);
+    tftPlSetSize(1);
+    tftPlSetColor(TFT_CYAN, TFT_TRANS);
+    tftPlPrint(topStr, fx + 2, rowTop + 9);
+  }
+  drawVFOIndicator();
+  String mainKey = freqStr + "\x01" + (screenV ? decStr : "");
+  if (mainKey != dashFreqMain) {
+    dashFreqMain = mainKey;
+    tft.fillRect(fx, digitsY - tFreqDigitPxH + 6, fw, tFreqDigitPxH * 3 / 4, TFT_BLACK);
+    tftPlSetSize(tFreqDigitSize);
+    tftPlSetColor(TFT_YELLOW, TFT_TRANS);
+    tftPlPrint(freqStr, fx + 2, digitsY);
+    if (screenV and decStr.length()) {
+      int decX = fx + 2 + tftPlTextWidth(freqStr);
+      tftPlSetSize(max(1, tFreqDigitSize - 1));
+      tftPlPrint(decStr, decX, digitsY);
+      tftPlSetSize(tFreqDigitSize);
+    }
+    if (screenLocked) drawLockLabel(fx, fw, rowBot);
+  }
+  if (!screenV) {
+    if (decStr != dashFreqDec) {
+      dashFreqDec = decStr;
+      int rowDecY = rowBot - 2;
+      tft.fillRect(fx, rowDecY - 12, fw, 12, TFT_BLACK);
+      if (decStr.length()) {
+        tftPlSetSize(1);
+        tftPlSetColor(TFT_SKYBLUE, TFT_TRANS);
+        tftPlSetDatum(BR_T);
+        tftPlPrint(decStr, fx + fw - 2, rowDecY);
+        tftPlSetDatum(BL_T);
+      }
+    }
+  } else {
+    dashFreqDec = decStr;
+  }
+  String botKey = botStr + (screenLocked ? "#L" : "");
+  if (botKey != dashFreqBot) {
+    dashFreqBot = botKey;
+    tft.fillRect(fx, rowBot, fw, 12, TFT_BLACK);
+    tftPlSetSize(1);
+    tftPlSetColor(TFT_SKYBLUE, TFT_TRANS);
+    tftPlPrint(botStr, fx + 2, rowBot + 10);
+    if (screenLocked) drawLockLabel(fx, fw, rowBot);
+  }
+}
+
+void drawLegacyOverlayValue(String value, int valueX, String label, int labelX, int y) {
+  tft.drawString(value, valueX, y);
+  tft.setTextSize(2);
+  tft.drawString(label, labelX, y);
+}
+
 void FreqDispl() {
+
+  if ((FirstLayer or ThirdLayer) and !VOLbut and !AGCgainbut and !SQUELCHbut and !bfoOn
+      and !FREQbut and !HamBand and !Modebut and !BandWidth and !BroadBand and !SCANbut and !MEMObut and !STEPbut) {
+    currentFrequency = si4735.getFrequency();
+    drawDashboardFreq();
+    return;
+  }
+
+  if ((FirstLayer or ThirdLayer) and (VOLbut or AGCgainbut or SQUELCHbut) and !bfoOn) {
+    dashFreqTop = "\x01"; dashFreqMain = "\x01"; dashFreqBot = "\x01"; dashFreqVfo = "\x01";
+    tft.fillRect(tFreqX + 2, tFreqY + 2, tFreqW - 4, tFreqH - 4, TFT_BLACK);
+    String label, value;
+    if (SQUELCHbut) { label = "SQUELCH"; value = String(currentSquelch); }
+    else if (VOLbut) { label = "GLOSNOSC"; value = volumeDbLabel(currentVOL); }
+    else { label = "RF ATT"; value = String(currentAGCgain); }
+    tftPlSetFont(T1012_T);
+    tftPlSetSize(1);
+    tftPlSetStyle(NRG_T);
+    tftPlSetDatum(BL_T);
+    tftPlSetColor(TFT_SILVER, TFT_TRANS);
+    tftPlPrint(label, tFreqX + 6, tFreqY + 16);
+    tftPlSetSize(3);
+    tftPlSetColor(TFT_WHITE, TFT_TRANS);
+    tftPlPrint(value, tFreqX + 6, tFreqY + 55);
+    drawDashboardCards();
+    return;
+  }
+
+#ifdef IhaveCrystal
+  if ((FirstLayer or ThirdLayer) and bfoOn) {
+    tft.fillRect(tFreqX + 2, tFreqY + 2, tFreqW - 4, tFreqH - 4, TFT_BLACK);
+    tftPlSetFont(T1012_T);
+    tftPlSetSize(1);
+    tftPlSetStyle(NRG_T);
+    tftPlSetDatum(BL_T);
+    tftPlSetColor(TFT_ORANGE, TFT_TRANS);
+    tftPlPrint("BFO", tFreqX + 6, tFreqY + 16);
+    tftPlSetSize(3);
+    tftPlSetColor(TFT_WHITE, TFT_TRANS);
+    tftPlPrint(String(currentBFOmanu) + " Hz", tFreqX + 6, tFreqY + 55);
+    bfoTr = false;
+    drawDashboardCards();
+    return;
+  }
+#endif
 
   if (FirstLayer or ThirdLayer or SecondLayer) {
     int d = 0;
     if ((SCANbut or HamBand or Modebut or STEPbut or BandWidth or MEMObut) and !screenV) d = 40;
     currentFrequency = si4735.getFrequency();
+    if ((HamBand or Modebut or BandWidth or SCANbut or MEMObut or STEPbut or FREQbut or BroadBand)
+        and !VOLbut and !AGCgainbut and !SQUELCHbut and !bfoOn) {
+      tft.fillRect(XFreqDispl + d, YFreqDispl + 20, 240, 50, TFT_BLACK);
+      String freqStr, unit;
+      if (currentMode == FM) { freqStr = String(si4735.getFrequency() / 100.0, 2); unit = "MHz"; }
+      else if (band[bandIdx].bandType == MW_BAND_TYPE or band[bandIdx].bandType == LW_BAND_TYPE) { freqStr = String((long)si4735.getFrequency()); unit = "kHz"; }
+      else if (currentMode == LSB or currentMode == USB or currentMode == CW) {
+        long disp = ((long)si4735.getFrequency() * 1000) - band[bandIdx].lastBFO;
+        freqStr = String(disp / 1000.0, 2); unit = "kHz";
+      } else { freqStr = String((long)si4735.getFrequency()); unit = "kHz"; }
+      tftPlSetFont(T1012_T);
+      tftPlSetSize(3);
+      tftPlSetStyle(NRG_T);
+      tftPlSetDatum(BL_T);
+      tftPlSetColor(TFT_YELLOW, TFT_TRANS);
+      tftPlPrint(freqStr, XFreqDispl + d + 10, YFreqDispl + 60);
+      tftPlSetSize(1);
+      tftPlSetColor(TFT_SILVER, TFT_TRANS);
+      tftPlPrint(unit, XFreqDispl + d + 150, YFreqDispl + 68);
+      return;
+    }
+
     if (!FREQbut and !HamBand and !Modebut and !BandWidth and !BroadBand and !SCANbut and !MEMObut and !STEPbut) {
       AGCfreqdisp();
       BFOStepdisp();
@@ -7290,22 +9406,9 @@ void FreqDispl() {
       tft.setTextColor(TFT_WHITE, TFT_BLACK);
       tft.setTextSize(3);
 
-      if (SQUELCHbut) {
-        tft.drawString(String(currentSquelch), XFreqDispl + 80 + d, YFreqDispl + 53);
-        tft.setTextSize(2);
-        tft.drawString(" SQUELCH dB", XFreqDispl + 160 + d, YFreqDispl + 53);
-      }
-
-      if (VOLbut) {
-        tft.drawString(String(currentVOL), XFreqDispl + 84 + d, YFreqDispl + 53);
-        tft.setTextSize(2);
-        tft.drawString("VOLUME", XFreqDispl + 160 + d, YFreqDispl + 53);
-      }
-      if (AGCgainbut) {
-        tft.drawString(String(currentAGCgain), XFreqDispl + 60, YFreqDispl + 53);
-        tft.setTextSize(2);
-        tft.drawString("RF ATT", XFreqDispl + 160, YFreqDispl + 53);
-      }
+      if (SQUELCHbut) drawLegacyOverlayValue(String(currentSquelch), XFreqDispl + 80 + d, " SQUELCH dB", XFreqDispl + 160 + d, YFreqDispl + 53);
+      if (VOLbut) drawLegacyOverlayValue(volumeDbLabel(currentVOL), XFreqDispl + 84 + d, "VOLUME", XFreqDispl + 160 + d, YFreqDispl + 53);
+      if (AGCgainbut) drawLegacyOverlayValue(String(currentAGCgain), XFreqDispl + 60, "RF ATT", XFreqDispl + 160, YFreqDispl + 53);
       volDisp = true;
     } else {
       volDisp = false;
@@ -7430,42 +9533,22 @@ bool checkStopSeeking() {
 
 void SeekFreq (uint16_t freq)  {
 
-  FreqDraw(float(freq), 0);
+  FreqDispl();
 }
 
 void DrawDispl() {
 
   tft.fillRect(XFreqDispl, YFreqDispl, 240, 86, TFT_BLACK);
-
-  tft.setTextSize(1);
-  tft.setTextDatum(BC_DATUM);
-
-  tft.setTextColor(2031, TFT_BLACK);
-  tft.drawString(band[bandIdx].bandName, XFreqDispl + 180, YFreqDispl + 15);
-  tft.drawRect(XFreqDispl + 160, YFreqDispl + 2, 39, 16, 2031);
-
-  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  Modtext = bandModeDesc[currentMode];
-  if ((Modtext == "USB") and (CWShift == true)) Modtext = "CW";
-  tft.drawString(Modtext, XFreqDispl + 95, YFreqDispl + 15);
-  tft.drawRect(XFreqDispl + 80, YFreqDispl + 2, 29, 16, TFT_YELLOW);
-
-  if (currentMode == AM) BWtext = bandwidthAM[bwIdxAM];
-  if (currentMode == LSB || currentMode == USB || currentMode == CW) BWtext = bandwidthSSB[bwIdxSSB];
-  if (currentMode == FM) BWtext = bandwidthFM[bwIdxFM];
-  tft.setTextColor(64799, TFT_BLACK);
-  if (BWtext == "AUTO") {
-    tft.drawString("F AUTO", XFreqDispl + 135, YFreqDispl + 15);
-  } else tft.drawString("F" + BWtext + "KHz", XFreqDispl + 135, YFreqDispl + 15);
-  tft.drawRect(XFreqDispl + 110, YFreqDispl + 2, 49, 16, 64799);
-
-  tft.setTextColor(TFT_SKYBLUE, TFT_BLACK);
-  if (currentMode == FM) {
-    tft.drawString(String((band[bandIdx].currentStep) * 10) + "KHz", XFreqDispl + 220, YFreqDispl + 15);
-  } else  tft.drawString(String(band[bandIdx].currentStep) + "KHz", XFreqDispl + 220, YFreqDispl + 15);
-  tft.drawRect(XFreqDispl + 200, YFreqDispl + 2, 39, 16, TFT_SKYBLUE);
-
+  dashFreqTop = ""; dashFreqVfo = ""; dashFreqMain = ""; dashFreqDec = ""; dashFreqBot = ""; dashFreqLock = "";
+  dashEverDrawnVFO = false;
+  dashEverDrawnSig = false; dashLastSLabel = ""; dashLastBarW = -1;
+  dashLastExtra = ""; dashLastTopRight = ""; dashLastTopLeft = "";
+  dashLastPeakBarW = -1; dashSigPeakBarW = 0; dashSigPeakDecayMs = 0;
   FreqDispl();
+  if (FirstLayer or ThirdLayer) {
+    DrawSmeter();
+    drawDashboardCards();
+  }
 }
 
 void AGCfreqdisp() {
@@ -7622,26 +9705,32 @@ void drawSCAN() {
 }
 
 uint16_t heatColor565(uint8_t v) {
-  uint8_t r, g, b;
-  if (v < 64) {
-    r = 0; g = 0; b = v;
-  } else if (v < 128) {
-    uint8_t f = v - 64;
-    r = 0; g = f * 2; b = 64 - f / 2;
-  } else if (v < 192) {
-    uint8_t f = v - 128;
-    r = f * 4; g = 128 + f / 2; b = 0;
-  } else {
-    uint8_t f = v - 192;
-    r = 255; g = 255 - f * 4; b = 0;
-  }
+  int r, g, b;
+  if (v < 43)       { r = 0;            g = 0;            b = v * 6; }
+  else if (v < 86)  { int f = v - 43;   r = 0;            g = f * 6;        b = 255; }
+  else if (v < 128) { int f = v - 86;   r = 0;            g = 255;          b = 255 - f * 6; }
+  else if (v < 171) { int f = v - 128;  r = f * 6;        g = 255;          b = 0; }
+  else if (v < 214) { int f = v - 171;  r = 255;          g = 255 - f * 6;  b = 0; }
+  else              { int f = v - 214;  r = 255;          g = f * 6;        b = f * 6; }
+  if (r < 0) r = 0; if (r > 255) r = 255;
+  if (g < 0) g = 0; if (g > 255) g = 255;
+  if (b < 0) b = 0; if (b > 255) b = 255;
   return tft.color565(r, g, b);
 }
 
+uint8_t wfPeak = 20;
+
 void commitWaterfallRow() {
   waterfallHead = (waterfallHead + 1) % WF_ROWS;
+  int rowMax = 0;
+  for (int x = 0; x < 320; x++) if (ScanValueSNR[x] > rowMax) rowMax = ScanValueSNR[x];
+  if (rowMax > wfPeak) wfPeak = rowMax;
+  else if (wfPeak > 20) wfPeak--;
+  int gain = (wfPeak > 0) ? (255 / wfPeak) : 8;
+  if (gain < 2) gain = 2;
+  if (gain > 24) gain = 24;
   for (int x = 0; x < 320; x++) {
-    int v = ScanValueSNR[x] * 6;
+    int v = ScanValueSNR[x] * gain;
     if (v < 0) v = 0; if (v > 255) v = 255;
     waterfallBuf[waterfallHead][x] = (uint8_t) v;
   }
@@ -7655,9 +9744,11 @@ void drawSCANwaterfall() {
   int rows = (bottom - top) / rowH;
   if (rows > WF_ROWS) rows = WF_ROWS;
   static uint16_t rowBuf[320];
+  int marker = width / 2;
   for (int r = 0; r < rows; r++) {
     int bufIdx = (waterfallHead - r + WF_ROWS) % WF_ROWS;
     for (int x = 0; x < width; x++) rowBuf[x] = heatColor565(waterfallBuf[bufIdx][x]);
+    if (marker >= 0 and marker < width and (r % 3) != 2) rowBuf[marker] = TFT_WHITE;
     int y = top + r * rowH;
     for (int yy = 0; yy < rowH and (y + yy) < bottom; yy++) tft.pushImage(0, y + yy, width, 1, rowBuf);
   }
@@ -7697,6 +9788,16 @@ void drawSCANgraf(bool erase) {
   if (scanWaterfallOn) drawSCANwaterfall();
 }
 
+int16_t snrToScanColor(int n) {
+  int16_t colf = TFT_NAVY;
+  if (ScanValueSNR[n] > 0) {
+    colf = TFT_NAVY + 0x8000;
+    if (ScanValueSNR[n] < 16) colf += (ScanValueSNR[n] * 2048);
+    else { colf = 0xF810; if (ScanValueSNR[n] < 24) colf += ((ScanValueSNR[n] - 16) * 258); else colf = 0xFF1E; }
+  }
+  return colf;
+}
+
 void drawSCANlineCompact(int n, int d, int graphTop, int graphBottom) {
   updateScanBandEdges(n, d);
   int fullBottom = 198 + d;
@@ -7710,12 +9811,7 @@ void drawSCANlineCompact(int n, int d, int graphTop, int graphBottom) {
     return;
   }
 
-  int16_t colf = TFT_NAVY;
-  if (ScanValueSNR[n] > 0) {
-    colf = TFT_NAVY + 0x8000;
-    if (ScanValueSNR[n] < 16) colf += (ScanValueSNR[n] * 2048);
-    else { colf = 0xF810; if (ScanValueSNR[n] < 24) colf += ((ScanValueSNR[n] - 16) * 258); else colf = 0xFF1E; }
-  }
+  int16_t colf = snrToScanColor(n);
   long frq = currentScanFreq + ((n - 159 + d + deltaScanLine) * SCANstep);
   if (frq > band[bandIdx].maximumFreq or frq < band[bandIdx].minimumFreq) colf = TFT_GREY;
 
@@ -7781,15 +9877,7 @@ void drawSCANline(int n) {
       colb = TFT_OLIVE;
     }
 
-    if (ScanValueSNR[n] > 0) {
-      colf = TFT_NAVY + 0x8000;
-      if (ScanValueSNR[n] < 16) {
-        colf += (ScanValueSNR[n] * 2048);
-      } else {
-        colf = 0xF810;
-        if (ScanValueSNR[n] < 24) colf += ((ScanValueSNR[n] - 16) * 258); else colf = 0xFF1E;
-      }
-    }
+    if (ScanValueSNR[n] > 0) colf = snrToScanColor(n);
 
     updateScanBandEdges(n, d);
     if ((currentScanFreq + ((n - 159 + d + deltaScanLine) * SCANstep)) > band[bandIdx].maximumFreq) {
@@ -7919,13 +10007,20 @@ void DisplaySCAN() {
       DrawSCANtxt(false);
     }
     if (scanStopOnSignal and !scanStopUntil and ScanValueSNR[posScan] >= ScanMarkSNR and posScan > ScanBeginBand and posScan < ScanEndBand and !isFreqSkipped(freqAtPos)) {
+      int bestIdx = posScan, bestVal = ScanPeakRSSI[posScan];
+      int wStart = max(posScan - SCAN_PEAK_WINDOW, ScanBeginBand + 1);
+      int wEnd   = min(posScan + SCAN_PEAK_WINDOW, ScanEndBand - 1);
+      for (int i = wStart; i <= wEnd; i++) {
+        long fq = currentScanFreq + (long)((deltaScanLine - 159 + d + i) * SCANstep);
+        if (ScanPeakRSSI[i] < bestVal and !isFreqSkipped(fq)) { bestVal = ScanPeakRSSI[i]; bestIdx = i; }
+      }
       si4735.setAudioMute(audioMuteOff);
-      posScanFreq = currentScanFreq + int((deltaScanLine - 159 + d + posScan) * SCANstep);
+      posScanFreq = currentScanFreq + int((deltaScanLine - 159 + d + bestIdx) * SCANstep);
       setFreq(posScanFreq);
       AGCgain = ScanAGC;
       checkAGC();
       scanStopUntil = millis() + ((unsigned long)scanStopSeconds * 1000UL);
-      logDiscovery(freqAtPos, ScanValueSNR[posScan]);
+      logDiscovery(posScanFreq, ScanValueSNR[bestIdx]);
       return;
     }
     if (SCANstep < 1) {
@@ -8438,7 +10533,7 @@ void displMEMO() {
             ErrorBeep();
           }
           tftPlSetColor(TFT_WHITE, TFT_TRANS);
-          tftPlPrint("empty", d, (i * 40) + 157);
+          tftPlPrint("puste", d, (i * 40) + 157);
         } else {
           tftPlSetColor(TFT_WHITE, TFT_TRANS);
           tftPlSetCut(0, 20);
@@ -8481,12 +10576,6 @@ void displSETUP() {
 
   int d = !screenV * 5;
   tft.fillRect(d, 20, 280, 178, TFT_BLACK);
-  if (!screenV) {
-    for (int n = 1; n <= 20; n++) {
-      tft.fillRect(40 - (n * 2), 40, 2, 160, ((int(n / 2) * 4096) + (n * 32)));
-      tft.fillRect((n * 2) + 278, 40, 2, 160, ((int(n / 2) * 4096) + (n * 32)));
-    }
-  }
 
   spr.createSprite(265, 120);
   spr.fillScreen(COLOR_BACKGROUND);
@@ -8515,6 +10604,7 @@ void displSETUP() {
       displSETUPitem     ("Podświetl cyfry   ", 52,  prevdigitLigth, (digitLigth != prevdigitLigth));
       displSETUPitem     ("Memo in preset    ", 84, prevmemoPreset, (memoPreset != prevmemoPreset));
       displSETUPitem     ("ANG. nazwy pasm   ", 116, !prevlangRetroEN, (langRetroEN != prevlangRetroEN));
+      displSETUPitemValue("Motyw             ", 148, themeName(prevthemeIdx), (themeIdx != prevthemeIdx));
       break;
     case 2:
       tftPlPrint("USTAWIENIA - WYŚWIETLACZ ", 2 , 18);
@@ -8556,7 +10646,7 @@ void displSETUP() {
       displSETUPitem     ("Resetuj zapisaną sieć. ", 116, prevresetWifiConfig, (resetWifiConfig != prevresetWifiConfig));
       displSETUPitem     ("Tryb nocny (NTP)  ", 148, prevnightModeOn, (nightModeOn != prevnightModeOn));
       break;
-	case 7:
+	case 7: {
 	  tftPlPrint("USTAWIENIA - TEST        ", 2 , 18);
 		int startX = 20 + d;
 		int startY = 40;
@@ -8582,16 +10672,35 @@ void displSETUP() {
 		  tftPlPrint("Wolna pamięć: " + String(ESP.getFreeHeap() / 1024) + " KB", 20, startY + size + 62);
 		  tftPlPrint("Wolny blok: " + String(ESP.getMaxAllocHeap() / 1024) + " KB", 20, startY + size + 82);
 
-		  tft.fillRect(d + 20, 180, 90, 16, TFT_DARKGREY);
-		  tft.drawRect(d + 20, 180, 90, 16, TFT_CYAN);
-		  tftPlSetDatum(BC_T);
+		  tftPlSetDatum(TC_T);
 		  tftPlSetColor(TFT_CYAN, TFT_TRANS);
-		  tftPlPrint("USTAW DOTYK", 65 + d, 194);
+		  if (screenV) {
+			tft.fillRoundRect(45, 180, 150, 24, 8, TFT_DARKGREY);
+			tft.drawRoundRect(45, 180, 150, 24, 8, TFT_CYAN);
+			tftPlPrint("USTAW DOTYK", 120, 186);
 
-		  tft.fillRect(d + 130, 180, 90, 16, TFT_DARKGREY);
-		  tft.drawRect(d + 130, 180, 90, 16, TFT_CYAN);
-		  tftPlPrint("FW INFO", 175 + d, 194);
+			tft.fillRoundRect(72, 212, 95, 24, 8, TFT_DARKGREY);
+			tft.drawRoundRect(72, 212, 95, 24, 8, TFT_CYAN);
+			tftPlPrint("FW INFO", 119, 218);
+		  } else {
+			tft.fillRoundRect(d + 5, 174, 150, 24, 8, TFT_DARKGREY);
+			tft.drawRoundRect(d + 5, 174, 150, 24, 8, TFT_CYAN);
+			tftPlPrint("USTAW DOTYK", d + 80, 180);
+
+			tft.fillRoundRect(d + 165, 174, 95, 24, 8, TFT_DARKGREY);
+			tft.drawRoundRect(d + 165, 174, 95, 24, 8, TFT_CYAN);
+			tftPlPrint("FW INFO", d + 212, 180);
+		  }
 	break;
+    }
+    case 8:
+      tftPlPrint("USTAWIENIA - ODBIÓR      ", 2 , 18);
+      displSETUPitem     ("Squelch adaptacyjny", 20,  prevsquelchAdaptiveOn, (squelchAdaptiveOn != prevsquelchAdaptiveOn));
+      displSETUPitem     ("Dekoder RTTY (exp)", 52,  prevrttyDecoderOn, (rttyDecoderOn != prevrttyDecoderOn));
+      displSETUPitem     ("Bateria w Volt    ", 84,  prevbatVolt, (batVolt != prevbatVolt));
+      displSETUPitemValue("Czas zatrz. SCAN  ", 116, String(prevscanStopSeconds) + "s", (scanStopSeconds != prevscanStopSeconds));
+      displSETUPitem     ("Close Call (peak) ", 148, prevcloseCallOn, (closeCallOn != prevcloseCallOn));
+      break;
   }
 }
 
@@ -8670,6 +10779,12 @@ void defaultSETUP() {
     prevwebServerOn = false;
     prevanalogMeterOn = false;
     prevnightModeOn = false;
+    prevthemeIdx = 0;
+    prevsquelchAdaptiveOn = false;
+    prevrttyDecoderOn = false;
+    prevbatVolt = true;
+    prevscanStopSeconds = 5;
+    prevcloseCallOn = false;
 
     prevbatShow = false;
     prevbeeperOn = true;
@@ -8681,6 +10796,7 @@ void defaultSETUP() {
     prevwifiEnable = true;
     prevwifiConfigureNow = false;
     prevresetWifiConfig = false;
+    applyColorTheme(prevthemeIdx);
   }
   drawList(L_SETUP,"USTAWIENIA");
   if (!pageSetup) drawButton(L_SETUP, 0, B_BLOCK);
@@ -8722,6 +10838,10 @@ void changeSETUP(int pos) {
           break;
         case 3:
           prevlangRetroEN = !prevlangRetroEN;
+          break;
+        case 4:
+          prevthemeIdx = nextThemeIdx(prevthemeIdx);
+          applyColorTheme(prevthemeIdx);
           break;
       }
       break;
@@ -8796,6 +10916,7 @@ void changeSETUP(int pos) {
           break;
         case 2:
           prevcwDecoderOn = !prevcwDecoderOn;
+          if (prevcwDecoderOn) prevrttyDecoderOn = false;
           break;
         case 3:
           prevwebServerOn = !prevwebServerOn;
@@ -8828,7 +10949,7 @@ void changeSETUP(int pos) {
     case 7:
       switch (pos) {
         case 5:
-          if (x < 120) {
+          if (screenV or x < 162) {
             tft.fillScreen(TFT_BLACK);
             tftPlSetSize(1);
             tftPlSetStyle(NRG_T);
@@ -8840,9 +10961,37 @@ void changeSETUP(int pos) {
             saveConfig();
             tft.setTouch(touchCalData);
           } else {
+            x = y = 0;
             showFirmwareInformation();
           }
           displSETUP();
+          drawButtons(L_SETUP);
+          break;
+        case 6:
+          x = y = 0;
+          showFirmwareInformation();
+          displSETUP();
+          drawButtons(L_SETUP);
+          break;
+      }
+      break;
+    case 8:
+      switch (pos) {
+        case 0:
+          prevsquelchAdaptiveOn = !prevsquelchAdaptiveOn;
+          break;
+        case 1:
+          prevrttyDecoderOn = !prevrttyDecoderOn;
+          if (prevrttyDecoderOn) prevcwDecoderOn = false;
+          break;
+        case 2:
+          prevbatVolt = !prevbatVolt;
+          break;
+        case 3:
+          prevscanStopSeconds = nextScanStopSeconds(prevscanStopSeconds);
+          break;
+        case 4:
+          prevcloseCallOn = !prevcloseCallOn;
           break;
       }
       break;
@@ -8859,7 +11008,8 @@ void saveSETUP() {
 	  saverDisableOnScan != prevsaverDisableOnScan or
       batMinV != prevbatMinV or batMaxV != prevbatMaxV or rssiHistoryOn != prevrssiHistoryOn or
       ScanMarkSNR != prevScanMarkSNR or scanStopOnSignal != prevscanStopOnSignal or scanWaterfallOn != prevscanWaterfallOn or cwDecoderOn != prevcwDecoderOn or webServerOn != prevwebServerOn or analogMeterOn != prevanalogMeterOn or nightModeOn != prevnightModeOn or
-      resetWifiConfig != prevresetWifiConfig) {
+      resetWifiConfig != prevresetWifiConfig or themeIdx != prevthemeIdx or squelchAdaptiveOn != prevsquelchAdaptiveOn or rttyDecoderOn != prevrttyDecoderOn or
+      batVolt != prevbatVolt or scanStopSeconds != prevscanStopSeconds or closeCallOn != prevcloseCallOn) {
     int n = confirm("ZAPISAĆ ZMIANY?");
     if (n == 1) {
       if (VHFon != prevVHFon) {
@@ -8900,12 +11050,40 @@ void saveSETUP() {
       ScanMarkSNR = prevScanMarkSNR;
       scanStopOnSignal = prevscanStopOnSignal;
       scanWaterfallOn = prevscanWaterfallOn;
-      cwDecoderOn = prevcwDecoderOn;
+      {
+        bool cwWasOn = cwDecoderOn, rttyWasOn = rttyDecoderOn;
+        cwDecoderOn = prevcwDecoderOn;
+        rttyDecoderOn = prevrttyDecoderOn;
+        if (cwDecoderOn and rttyDecoderOn) {
+          if (rttyDecoderOn and !rttyWasOn) cwDecoderOn = false;
+          else if (cwDecoderOn and !cwWasOn) rttyDecoderOn = false;
+          else cwDecoderOn = false;
+        }
+        prevcwDecoderOn = cwDecoderOn;
+        prevrttyDecoderOn = rttyDecoderOn;
+      }
       webServerOn = prevwebServerOn;
       if (webServerOn) enableWebServer(); else disableWebServer();
       analogMeterOn = prevanalogMeterOn;
       nightModeOn = prevnightModeOn;
+      bool themeChanged = (themeIdx != prevthemeIdx);
+      if (themeChanged) {
+        themeIdx = prevthemeIdx;
+        applyColorTheme(themeIdx);
+      }
+      if (squelchAdaptiveOn != prevsquelchAdaptiveOn) {
+        squelchAdaptiveOn = prevsquelchAdaptiveOn;
+        squelchNoiseFloorInit = false;
+        squelchAdaptElapsed = 0;
+      }
       updateCWDecoderPin();
+      updateRTTYDecoderPin();
+      if (batVolt != prevbatVolt) {
+        batVolt = prevbatVolt;
+        elapsedBat = 0;
+      }
+      scanStopSeconds = prevscanStopSeconds;
+      closeCallOn = prevcloseCallOn;
       displayPower = prevdisplayPower;
       RDSalways = prevRDSalways;
       seekAccuracy = prevseekAccuracy;
@@ -8924,6 +11102,7 @@ void saveSETUP() {
           WiFi.mode(WIFI_OFF);
           storage.wifiSSID[0] = '\0';
           storage.wifiPassword[0] = '\0';
+          saveConfig();
           Serial.println("Zapisane sieci WiFi usunięto.");
           wifiActionTaken = true;
         } else {
@@ -8938,7 +11117,7 @@ void saveSETUP() {
         if (pageSetup == maxPageSetup) drawButton(L_SETUP, 1, B_BLOCK);
       }
 
-      if (loadMemory or loadDefault) {
+      if (loadMemory or loadDefault or themeChanged) {
         if (confirm("RESTART?") == 1) {
           tft.fillRect(!screenV * 40, 40, 240, 120, TFT_BLACK);
           tft.setTextSize(2);
@@ -8954,6 +11133,11 @@ void saveSETUP() {
       if (!pageSetup) drawButton(L_SETUP, 0, B_BLOCK);
       if (pageSetup == maxPageSetup) drawButton(L_SETUP, 1, B_BLOCK);
       SETUPbut = true;
+    } else if (n == 0) {
+      if (themeIdx != prevthemeIdx) {
+        prevthemeIdx = themeIdx;
+        applyColorTheme(themeIdx);
+      }
     }
   }
 }
@@ -9106,13 +11290,13 @@ void tftPlSetDatum(int datum) {
 void tftPlSetStyle(int style) {
 
   tftPlStyle = style;
-  tftPlWidth = 8 + (tftPlFont * 4) + (2 * !(tftPlStyle & 0x02)) + tftPlFont;
+  tftPlWidth = plFonts[tftPlFont].baseWidth + (2 * !(tftPlStyle & 0x02));
 }
 
 void tftPlSetFont(int font) {
 
   tftPlFont = font;
-  tftPlWidth = 8 + (tftPlFont * 4) + (2 * !(tftPlStyle & 0x02)) + tftPlFont;
+  tftPlWidth = plFonts[tftPlFont].baseWidth + (2 * !(tftPlStyle & 0x02));
 }
 
 void tftPlSetCut(int beg, int con) {
@@ -9184,39 +11368,38 @@ void tftPlPrint(String text, int x, int y) {
     if (tftPlDatum == TC_T) tftPlHAlign = 0;
     if (tftPlDatum == TR_T) tftPlHAlign = 1;
 
-    if (!tftPlTopAnchor) y -= (tftPlSize * (12 + (tftPlFont * 4)));
+    if (!tftPlTopAnchor) y -= (tftPlSize * plFonts[tftPlFont].height);
     if (tftPlHAlign > 0) x -= tftPlSize * tftPlWidth * textLength;
     if (tftPlHAlign == 0) x -= tftPlSize * tftPlWidth * textLength / 2;
+
+    uint8_t plCols   = plFonts[tftPlFont].cols;
+    uint8_t plHeight = plFonts[tftPlFont].height;
+    uint8_t plBlocks = (plHeight + 7) / 8;
+    const uint8_t* plData = plFonts[tftPlFont].data;
 
     for (int i = 0; i < textLength; i++) {
       for (int xx = 0; xx < tftPlWidth; xx++) {
         if (tftPlStyle > 3) {
-          cd = (2 + tftPlFont) * tftPlSize;
+          cd = plFonts[tftPlFont].cursiveOffset * tftPlSize;
           curcount = tftPlCursiveLevel - 1;
         }
-        for (int yb = 0; yb < 2; yb++ ) {
+        for (int yb = 0; yb < plBlocks; yb++ ) {
 
           unsigned short by;
           unsigned short byp;
-          if (tftPlFont) {
-            if (xx > 10) {
-              by = 0x00;
-            } else {
-              by = Tahoma15x16[(ascii[i] * 22) + (xx * 2) + yb];
-            }
-            if ((tftPlStyle & 0x01) and xx > 0 and xx < 12) byp = Tahoma15x16[(ascii[i] * 22) + ((xx - 1) * 2) + yb];
+          if (xx >= plCols) {
+            by = 0x00;
           } else {
-            if (xx > 6) {
-              by = 0x00;
-            } else {
-              by = Tahoma10x12[(ascii[i] * 14) + (xx * 2) + yb];
-            }
-            if ((tftPlStyle & 0x01) and xx > 0 and xx < 8) byp = Tahoma10x12[(ascii[i] * 14) + ((xx - 1) * 2) + yb];
+            by = plData[(ascii[i] * plCols * plBlocks) + (xx * plBlocks) + yb];
           }
+          if ((tftPlStyle & 0x01) and xx > 0 and xx < (plCols + 1)) byp = plData[(ascii[i] * plCols * plBlocks) + ((xx - 1) * plBlocks) + yb];
 
-          for (int yy = 0; yy < (8 - (yb * 4 * (1 - tftPlFont)) - (tftPlBottomCut * (yb * (2 + tftPlFont)))); yy++ ) {
+          int rowsInBlock = min(8, (int)plHeight - (yb * 8));
+          if (tftPlBottomCut) rowsInBlock -= yb * plFonts[tftPlFont].cursiveOffset;
+
+          for (int yy = 0; yy < rowsInBlock; yy++ ) {
             bool bi = (by >> yy) & 0x01;
-            if ((tftPlStyle & 0x01) and xx > 0 and xx < (8 + (4 * tftPlFont))) bi = bi | ((byp >> yy) & 0x01);
+            if ((tftPlStyle & 0x01) and xx > 0 and xx < (plCols + 1)) bi = bi | ((byp >> yy) & 0x01);
             for (int sy = 0; sy < tftPlSize; sy++) {
               for (int sx = 0; sx < tftPlSize; sx++) {
 
@@ -9294,12 +11477,14 @@ int jamButton(uint8_t lay) {
   int res = -1;
   int n = 0;
   bool flag = false;
+  uint16_t bw = (lay == L_FIRST || lay == L_THIRD) ? But_Width_Main : But_Width;
+  uint16_t bh = (lay == L_FIRST || lay == L_THIRD) ? But_Height_Main : But_Height;
   while (n <= lastBut && !flag) {
     if (but[n].layout == lay) {
       if (screenV) {
-        if (x >= (but[n].xPosV) && x < (but[n].xPosV + But_Width) && y >= (but[n].yPosV) && y < (but[n].yPosV + But_Height)) flag = true;
+        if (x >= (but[n].xPosV) && x < (but[n].xPosV + bw) && y >= (but[n].yPosV) && y < (but[n].yPosV + bh)) flag = true;
       } else {
-        if (x >= (but[n].xPosH) && x < (but[n].xPosH + But_Width) && y >= (but[n].yPosH) && y < (but[n].yPosH + But_Height)) flag = true;
+        if (x >= (but[n].xPosH) && x < (but[n].xPosH + bw) && y >= (but[n].yPosH) && y < (but[n].yPosH + bh)) flag = true;
       }
       if (flag and but[n].Name != "" and but[n].Name != " ") {
         res = but[n].num;
@@ -9319,6 +11504,8 @@ int jamButton(uint8_t lay) {
 void drawBut(uint8_t id, uint8_t state, String alt) {
   int bx = screenV ? but[id].xPosV : but[id].xPosH;
   int by = screenV ? but[id].yPosV : but[id].yPosH;
+  uint16_t But_Width = (but[id].layout == L_FIRST || but[id].layout == L_THIRD) ? But_Width_Main : ::But_Width;
+  uint16_t But_Height = (but[id].layout == L_FIRST || but[id].layout == L_THIRD) ? But_Height_Main : ::But_Height;
 
   if (alt == "") alt = but[id].Name;
   int type = but[id].type;
@@ -9372,6 +11559,7 @@ void drawBut(uint8_t id, uint8_t state, String alt) {
 
 void screenRotate() {
 
+  applyDashboardLayout(screenV);
   if (screenV) {
     tft.setRotation(0);
     tft.setTouch(calDataV);
@@ -9379,6 +11567,7 @@ void screenRotate() {
     tft.setRotation(1);
     tft.setTouch(calDataH);
   }
+  tft.fillScreen(TFT_BLACK);
 }
 
 void view(String text, int x, int y) {

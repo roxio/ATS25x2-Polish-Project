@@ -1,93 +1,226 @@
-// ============================================================================
-// PALETA KOLORÓW - styl klasycznej profesjonalnej radiostacji krótkofalarskiej
-// (bursztynowy odczyt VFD + chłodny "instrument teal" na czarnym tle,
-//  inspirowane Yaesu / Collins / Drake)
-//
-// Ten plik ładuje się PO bibliotece TFT_eSPI.h, więc #undef + #define poniżej
-// nadpisuje domyślne kolory biblioteki w CAŁYM projekcie - bez dotykania
-// pliku .ino. Oryginalne (domyślne) wartości TFT_eSPI zostały zachowane
-// w komentarzach obok każdej definicji, dla porównania / łatwego powrotu.
-// ============================================================================
 
 #undef TFT_BLACK
-#define TFT_BLACK       0x0000      /*   0,   0,   0   - bez zmian, czysta czern tla */
-
 #undef TFT_NAVY
-#define TFT_NAVY        0x0864      /*   8,  12,  32   - bylo 0,0,128 - ciemniejszy, bardziej "panelowy" granat */
-
 #undef TFT_DARKGREEN
-#define TFT_DARKGREEN   0x0AC5      /*   8,  89,  41   - bylo 0,128,0 */
-
 #undef TFT_DARKCYAN
-#define TFT_DARKCYAN    0x0B6F      /*   8, 109, 123   - bylo 0,128,128 - obrys S-metra/wygaszacza */
-
 #undef TFT_MAROON
-#define TFT_MAROON      0x5882      /*  90,  16,  16   - bylo 128,0,0 - tlo alertow/potwierdzen */
-
 #undef TFT_PURPLE
-#define TFT_PURPLE      0x7952      /* 123,  40, 148   - bylo 128,0,128 */
-
 #undef TFT_OLIVE
-#define TFT_OLIVE       0x7AE4      /* 123,  93,  32   - bylo 128,128,0 - przygaszony bursztyn zamiast oliwki (podzialka skali) */
-
 #undef TFT_LIGHTGREY
-#define TFT_LIGHTGREY   0xC67A      /* 197, 206, 213   - bylo 211,211,211 - lekko chlodniejszy stalowy odcien */
-
 #undef TFT_DARKGREY
-#define TFT_DARKGREY    0x39E8      /*  57,  60,  65   - bylo 128,128,128 - ciemna "obudowa" przyciskow/naglowkow */
-
 #undef TFT_BLUE
-#define TFT_BLUE        0x11F8      /*  16,  60, 197   - bylo 0,0,255 */
-
 #undef TFT_GREEN
-#define TFT_GREEN       0x3F2D      /*  57, 230, 106   - bylo 0,255,0 - "fosfor CRT", RDS/aktywnosc */
-
 #undef TFT_CYAN
-#define TFT_CYAN        0x2E3B      /*  41, 198, 222   - bylo 0,255,255 - glowny chlodny akcent (S-metr, wskazniki wtorne) */
-
 #undef TFT_RED
-#define TFT_RED         0xE145      /* 230,  40,  41   - bylo 255,0,0 - kursor/alarm, lekko przygaszona czerwien */
-
 #undef TFT_MAGENTA
-#define TFT_MAGENTA     0xD953      /* 222,  40, 156   - bylo 255,0,255 */
-
 #undef TFT_YELLOW
-#define TFT_YELLOW      0xFD60      /* 255, 174,   0   - bylo 255,255,0 - GLOWNY bursztynowy odczyt czestotliwosci (VFD) */
-
 #undef TFT_WHITE
-#define TFT_WHITE       0xF7DE      /* 246, 250, 246   - bylo 255,255,255 - lekko cieplejsza biel */
-
 #undef TFT_ORANGE
-#define TFT_ORANGE      0xFC02      /* 255, 129,  16   - bylo 255,180,0 - akcent ostrzegawczy */
-
 #undef TFT_GREENYELLOW
-#define TFT_GREENYELLOW 0xB7E0      /* 180, 255,   0   - bez zmian */
-
 #undef TFT_PINK
-#define TFT_PINK        0xE3D2      /* 230, 121, 148   - bylo 255,192,203 */
-
 #undef TFT_LIGHTPINK
-#define TFT_LIGHTPINK   0xFC9F      /* bez zmian */
-
 #undef TFT_BROWN
-#define TFT_BROWN       0x6A24      /* 106,  68,  32   - bylo 150,75,0 */
-
 #undef TFT_GOLD
-#define TFT_GOLD        0xFE27      /* 255, 198,  57   - bylo 255,215,0 - drugorzedny akcent bursztynowy */
-
 #undef TFT_SILVER
-#define TFT_SILVER      0xAD97      /* 172, 178, 189   - bylo 192,192,192 - chlodny stalowy (tekst przyciskow) */
-
 #undef TFT_SKYBLUE
-#define TFT_SKYBLUE     0x5D5C      /*  90, 170, 230   - bylo 135,206,235 - zimny akcent (np. pole STEP) */
-
 #undef TFT_VIOLET
-#define TFT_VIOLET      0x89F8      /* 139,  60, 197   - bylo 180,46,226 */
 
-// ============================================================================
-// Semantyczne aliasy (obecnie w wiekszosci nieuzywane bezposrednio w kodzie,
-// zachowane na przyszlosc / do ew. dalszej rozbudowy UI)
-// ============================================================================
+#define THEME_DARK_BLACK        0x0000
+#define THEME_DARK_NAVY         0x0864
+#define THEME_DARK_DARKGREEN    0x0AC5
+#define THEME_DARK_DARKCYAN     0x0B6F
+#define THEME_DARK_MAROON       0x5882
+#define THEME_DARK_PURPLE       0x7952
+#define THEME_DARK_OLIVE        0x7AE4
+#define THEME_DARK_LIGHTGREY    0xC67A
+#define THEME_DARK_DARKGREY     0x39E8
+#define THEME_DARK_BLUE         0x11F8
+#define THEME_DARK_GREEN        0x3F2D
+#define THEME_DARK_CYAN         0x2E3B
+#define THEME_DARK_RED          0xE145
+#define THEME_DARK_MAGENTA      0xD953
+#define THEME_DARK_YELLOW       0xFD60
+#define THEME_DARK_WHITE        0xF7DE
+#define THEME_DARK_ORANGE       0xFC02
+#define THEME_DARK_GREENYELLOW  0xB7E0
+#define THEME_DARK_PINK         0xE3D2
+#define THEME_DARK_LIGHTPINK    0xFC9F
+#define THEME_DARK_BROWN        0x6A24
+#define THEME_DARK_GOLD         0xFE27
+#define THEME_DARK_SILVER       0xAD97
+#define THEME_DARK_SKYBLUE      0x5D5C
+#define THEME_DARK_VIOLET       0x89F8
+
+#define THEME_CREAM_BLACK        0xF739
+#define THEME_CREAM_NAVY         0x1949
+#define THEME_CREAM_DARKGREEN    0x1244
+#define THEME_CREAM_DARKCYAN     0x12AB
+#define THEME_CREAM_MAROON       0x58E3
+#define THEME_CREAM_PURPLE       0x48EB
+#define THEME_CREAM_OLIVE        0x6AA3
+#define THEME_CREAM_LIGHTGREY    0x5A88
+#define THEME_CREAM_DARKGREY     0xCDB0
+#define THEME_CREAM_BLUE         0x19D1
+#define THEME_CREAM_GREEN        0x1326
+#define THEME_CREAM_CYAN         0x0B4D
+#define THEME_CREAM_RED          0xA944
+#define THEME_CREAM_MAGENTA      0x88EC
+#define THEME_CREAM_YELLOW       0x8A40
+#define THEME_CREAM_WHITE        0x3964
+#define THEME_CREAM_ORANGE       0x9220
+#define THEME_CREAM_GREENYELLOW  0x4B01
+#define THEME_CREAM_PINK         0x89C9
+#define THEME_CREAM_LIGHTPINK    0x826A
+#define THEME_CREAM_BROWN        0x59C3
+#define THEME_CREAM_GOLD         0x7282
+#define THEME_CREAM_SILVER       0x5A88
+#define THEME_CREAM_SKYBLUE      0x2AF0
+#define THEME_CREAM_VIOLET       0x5150
+
+#define THEME_BLUE_BLACK       0x0001
+#define THEME_BLUE_NAVY        0x0887
+#define THEME_BLUE_DARKGREEN   0x09C8
+#define THEME_BLUE_DARKCYAN    0x0ACD
+#define THEME_BLUE_MAROON      0x5082
+#define THEME_BLUE_PURPLE      0x3931
+#define THEME_BLUE_OLIVE       0x3ACE
+#define THEME_BLUE_LIGHTGREY   0xBE3A
+#define THEME_BLUE_DARKGREY    0x1927
+#define THEME_BLUE_BLUE        0x237B
+#define THEME_BLUE_GREEN       0x3ED3
+#define THEME_BLUE_CYAN        0x3E3D
+#define THEME_BLUE_RED         0xD9C7
+#define THEME_BLUE_MAGENTA     0xC1D5
+#define THEME_BLUE_YELLOW      0x76DF
+#define THEME_BLUE_WHITE       0xDF7F
+#define THEME_BLUE_ORANGE      0xFCA4
+#define THEME_BLUE_GREENYELLOW 0x8F0E
+#define THEME_BLUE_PINK        0xDC58
+#define THEME_BLUE_LIGHTPINK   0xD55A
+#define THEME_BLUE_BROWN       0x41CD
+#define THEME_BLUE_GOLD        0xFDC9
+#define THEME_BLUE_SILVER      0xADD9
+#define THEME_BLUE_SKYBLUE     0x6DDE
+#define THEME_BLUE_VIOLET      0x7A7A
+
+#define THEME_GREEN_BLACK       0x0000
+#define THEME_GREEN_NAVY        0x0922
+#define THEME_GREEN_DARKGREEN   0x0A22
+#define THEME_GREEN_DARKCYAN    0x0B07
+#define THEME_GREEN_MAROON      0x5082
+#define THEME_GREEN_PURPLE      0x3AC4
+#define THEME_GREEN_OLIVE       0x5363
+#define THEME_GREEN_LIGHTGREY   0xBED7
+#define THEME_GREEN_DARKGREY    0x19A3
+#define THEME_GREEN_BLUE        0x1CAA
+#define THEME_GREEN_GREEN       0x3FEA
+#define THEME_GREEN_CYAN        0x3ED3
+#define THEME_GREEN_RED         0xDA27
+#define THEME_GREEN_MAGENTA     0xABA7
+#define THEME_GREEN_YELLOW      0xA7E7
+#define THEME_GREEN_WHITE       0xD7FA
+#define THEME_GREEN_ORANGE      0xFD44
+#define THEME_GREEN_GREENYELLOW 0xBFE7
+#define THEME_GREEN_PINK        0xC58E
+#define THEME_GREEN_LIGHTPINK   0xBE32
+#define THEME_GREEN_BROWN       0x4A23
+#define THEME_GREEN_GOLD        0xD667
+#define THEME_GREEN_SILVER      0xAE34
+#define THEME_GREEN_SKYBLUE     0x5634
+#define THEME_GREEN_VIOLET      0x6CA8
+
+#define THEME_AMBER_BLACK       0x0000
+#define THEME_AMBER_NAVY        0x30E1
+#define THEME_AMBER_DARKGREEN   0x4181
+#define THEME_AMBER_DARKCYAN    0x5201
+#define THEME_AMBER_MAROON      0x60C1
+#define THEME_AMBER_PURPLE      0x5182
+#define THEME_AMBER_OLIVE       0x7261
+#define THEME_AMBER_LIGHTGREY   0xD634
+#define THEME_AMBER_DARKGREY    0x3963
+#define THEME_AMBER_BLUE        0x9B64
+#define THEME_AMBER_GREEN       0xC443
+#define THEME_AMBER_CYAN        0xFD47
+#define THEME_AMBER_RED         0xDA24
+#define THEME_AMBER_MAGENTA     0xC307
+#define THEME_AMBER_YELLOW      0xFDC4
+#define THEME_AMBER_WHITE       0xFF58
+#define THEME_AMBER_ORANGE      0xFCA2
+#define THEME_AMBER_GREENYELLOW 0xDE26
+#define THEME_AMBER_PINK        0xDCAD
+#define THEME_AMBER_LIGHTPINK   0xDD4F
+#define THEME_AMBER_BROWN       0x6A43
+#define THEME_AMBER_GOLD        0xFE49
+#define THEME_AMBER_SILVER      0xC592
+#define THEME_AMBER_SKYBLUE     0xD54A
+#define THEME_AMBER_VIOLET      0xAB67
+
+uint16_t TFT_BLACK        = THEME_DARK_BLACK;
+uint16_t TFT_NAVY         = THEME_DARK_NAVY;
+uint16_t TFT_DARKGREEN    = THEME_DARK_DARKGREEN;
+uint16_t TFT_DARKCYAN     = THEME_DARK_DARKCYAN;
+uint16_t TFT_MAROON       = THEME_DARK_MAROON;
+uint16_t TFT_PURPLE       = THEME_DARK_PURPLE;
+uint16_t TFT_OLIVE        = THEME_DARK_OLIVE;
+uint16_t TFT_LIGHTGREY    = THEME_DARK_LIGHTGREY;
+uint16_t TFT_DARKGREY     = THEME_DARK_DARKGREY;
+uint16_t TFT_BLUE         = THEME_DARK_BLUE;
+uint16_t TFT_GREEN        = THEME_DARK_GREEN;
+uint16_t TFT_CYAN         = THEME_DARK_CYAN;
+uint16_t TFT_RED          = THEME_DARK_RED;
+uint16_t TFT_MAGENTA      = THEME_DARK_MAGENTA;
+uint16_t TFT_YELLOW       = THEME_DARK_YELLOW;
+uint16_t TFT_WHITE        = THEME_DARK_WHITE;
+uint16_t TFT_ORANGE       = THEME_DARK_ORANGE;
+uint16_t TFT_GREENYELLOW  = THEME_DARK_GREENYELLOW;
+uint16_t TFT_PINK         = THEME_DARK_PINK;
+uint16_t TFT_LIGHTPINK    = THEME_DARK_LIGHTPINK;
+uint16_t TFT_BROWN        = THEME_DARK_BROWN;
+uint16_t TFT_GOLD         = THEME_DARK_GOLD;
+uint16_t TFT_SILVER       = THEME_DARK_SILVER;
+uint16_t TFT_SKYBLUE      = THEME_DARK_SKYBLUE;
+uint16_t TFT_VIOLET       = THEME_DARK_VIOLET;
+
+void refreshSaverColors();
+
+#define APPLY_THEME_COLORS(P) \
+  TFT_BLACK        = THEME_##P##_BLACK; \
+  TFT_NAVY         = THEME_##P##_NAVY; \
+  TFT_DARKGREEN    = THEME_##P##_DARKGREEN; \
+  TFT_DARKCYAN     = THEME_##P##_DARKCYAN; \
+  TFT_MAROON       = THEME_##P##_MAROON; \
+  TFT_PURPLE       = THEME_##P##_PURPLE; \
+  TFT_OLIVE        = THEME_##P##_OLIVE; \
+  TFT_LIGHTGREY    = THEME_##P##_LIGHTGREY; \
+  TFT_DARKGREY     = THEME_##P##_DARKGREY; \
+  TFT_BLUE         = THEME_##P##_BLUE; \
+  TFT_GREEN        = THEME_##P##_GREEN; \
+  TFT_CYAN         = THEME_##P##_CYAN; \
+  TFT_RED          = THEME_##P##_RED; \
+  TFT_MAGENTA      = THEME_##P##_MAGENTA; \
+  TFT_YELLOW       = THEME_##P##_YELLOW; \
+  TFT_WHITE        = THEME_##P##_WHITE; \
+  TFT_ORANGE       = THEME_##P##_ORANGE; \
+  TFT_GREENYELLOW  = THEME_##P##_GREENYELLOW; \
+  TFT_PINK         = THEME_##P##_PINK; \
+  TFT_LIGHTPINK    = THEME_##P##_LIGHTPINK; \
+  TFT_BROWN        = THEME_##P##_BROWN; \
+  TFT_GOLD         = THEME_##P##_GOLD; \
+  TFT_SILVER       = THEME_##P##_SILVER; \
+  TFT_SKYBLUE      = THEME_##P##_SKYBLUE; \
+  TFT_VIOLET       = THEME_##P##_VIOLET;
+
+void applyColorTheme(uint8_t idx) {
+  switch (idx) {
+    case 1: APPLY_THEME_COLORS(CREAM) break;
+    case 2: APPLY_THEME_COLORS(BLUE) break;
+    case 3: APPLY_THEME_COLORS(GREEN) break;
+    case 4: APPLY_THEME_COLORS(AMBER) break;
+    default: APPLY_THEME_COLORS(DARK) break;
+  }
+  refreshSaverColors();
+}
+
 #define COLOR_BACKGROUND      TFT_BLACK
 #define COLOR_FRAME           TFT_BLACK
 #define COLOR_BUTTON_BG       TFT_DARKGREY

@@ -2,8 +2,8 @@
 
 **SI4735 2.8" TFT WiFi — Wersja Polska**
 
-Wersja firmware: **0.17PL**
-Data wydania: 12 sierpnia 2026
+Wersja firmware: **0.18PL**
+Data wydania: 19 sierpnia 2026
 Projekt: ATS25X2 Polish Project (RoX10 PL MOD)
 
 ---
@@ -22,6 +22,7 @@ Projekt: ATS25X2 Polish Project (RoX10 PL MOD)
 10. [Menu ustawień](#10-menu-ustawień)
 11. [Panel sterowania WWW](#11-panel-sterowania-www)
 12. [Rozwiązywanie problemów](#12-rozwiązywanie-problemów)
+13. [Historia zmian](#13-historia-zmian)
 
 ---
 
@@ -62,6 +63,8 @@ Jeśli urządzenie nie ma zapisanej sieci WiFi, po starcie automatycznie urucham
 ## 3. Ekran główny
 
 Ekran główny wyświetla bieżącą częstotliwość, pasmo, tryb pracy, S-metr, zegar oraz wskaźnik baterii. W dolnej części znajdują się przyciski szybkiego dostępu do najczęściej używanych funkcji (pasmo, tryb, głośność, strojenie, skanowanie, pamięć, ustawienia).
+
+Poziom głośności pokazywany jest w skali **-49dB…+49dB**, znanej ze starszych radiostacji (logika regulacji pozostaje bez zmian — zmienił się wyłącznie sposób odczytu).
 
 W lewym dolnym rogu wyświetlacza częstotliwości, w miarę korzystania z funkcji opisanych w rozdziale 4, mogą pojawiać się małe wskaźniki:
 
@@ -168,7 +171,7 @@ Na wykresie skanera widoczne są kolorowe znaczniki segmentów pasm amatorskich 
 
 ### 6.3 Próg wykrycia i zatrzymanie na sygnale
 
-Próg SNR, powyżej którego sygnał jest oznaczany jako wykryty, można ustawić w USTAWIENIA → SI473X („Prog wykrycia SNR”). Po włączeniu opcji „Stop na sygnale” skaner automatycznie wstrzymuje przemiatanie na kilka sekund po wykryciu sygnału powyżej progu, po czym samoczynnie wznawia.
+Próg SNR, powyżej którego sygnał jest oznaczany jako wykryty, można ustawić w USTAWIENIA → SI473X („Prog wykrycia SNR”). Po włączeniu opcji „Stop na sygnale” skaner nie zatrzymuje się dokładnie w momencie przekroczenia progu, tylko doszukuje najsilniejszego punktu w najbliższym otoczeniu (na bazie danych Peak Hold) i dostraja się precyzyjnie do niego. Odbiornik odsłuchuje tę częstotliwość przez czas ustawiony w USTAWIENIA → ODBIÓR („Czas zatrz. SCAN”, 1–10 sekund), po czym automatycznie wznawia przemiatanie.
 
 ### 6.4 Tryb Close Call
 
@@ -216,7 +219,7 @@ Włączany w USTAWIENIA → WIFI („Tryb nocny (NTP)”). Gdy aktywny, odbiorni
 
 ## 10. Menu ustawień
 
-Menu ustawień podzielone jest na osiem zakładek, przełączanych przyciskami «« / »» u dołu ekranu.
+Menu ustawień podzielone jest na dziewięć zakładek, przełączanych przyciskami «« / »» u dołu ekranu.
 
 ### 10.1 SI473X
 
@@ -236,6 +239,7 @@ Menu ustawień podzielone jest na osiem zakładek, przełączanych przyciskami �
 | Podświetl cyfry | Podświetlenie cyfr wyświetlacza częstotliwości |
 | Memo in preset | Sposób łączenia banku pamięci z presetami |
 | ANG. nazwy pasm | Język nazw pasm w trybie retro (polski/angielski) |
+| Motyw | Motyw kolorystyczny interfejsu: CIEMNY / KREMOWY / NIEBIESKI / ZIELONY / BURSZTYN — zmiana widoczna na żywo już w trakcie przeglądania ustawień |
 
 ### 10.3 WYŚWIETLACZ
 
@@ -291,6 +295,15 @@ Ekran diagnostyczny: test kolorów RGB, test wyświetlania polskich znaków, inf
 
 - **USTAW DOTYK** — uruchamia kalibrację ekranu dotykowego (dotknij kolejno wyświetlane znaczniki); wynik zapisywany jest trwale i automatycznie stosowany przy każdym starcie.
 - **FW INFO** — pokazuje szczegółowe informacje o firmware chipu SI4735 (numer części, wersje firmware i komponentów, chip revision).
+
+### 10.9 ODBIÓR
+
+| Pozycja | Opis |
+|---|---|
+| Squelch adaptacyjny | Automatyczne dopasowanie progu squelch do poziomu szumu tła |
+| Dekoder RTTY (exp) | Eksperymentalny dekoder RTTY (wymaga dodatkowego sprzętu na GPIO, wyklucza się z dekoderem CW) |
+| Bateria w Volt | Wskaźnik baterii pokazuje napięcie zamiast procentu naładowania |
+| Czas zatrz. SCAN | Czas odsłuchu (1–10 s) po zatrzymaniu skanera na sygnale — patrz rozdz. 6.3 |
 
 ---
 
@@ -373,6 +386,30 @@ W menu opcji dostępna jest funkcja pełnego eksportu konfiguracji urządzenia d
 **Import stacji/konfiguracji przez WWW się nie udaje**
 - Sprawdź format pliku — dla stacji: `częstotliwość;nazwa;pasmo;tryb`, jedna linia na stację.
 - Dla konfiguracji: plik musi pochodzić z urządzenia na tej samej wersji firmware.
+
+---
+
+## 13. Historia zmian
+
+### 0.18PL — 19 sierpnia 2026
+
+**Dodano**
+
+- „Stop na sygnale” w skanerze doszukuje teraz precyzyjnie najsilniejszego punktu w otoczeniu wykrytego sygnału (zamiast zatrzymywać się dokładnie w momencie przekroczenia progu SNR), a czas odsłuchu przed wznowieniem skanowania jest konfigurowalny (1–10 s, USTAWIENIA → ODBIÓR → „Czas zatrz. SCAN”).
+
+**Zmieniono**
+
+- Poziom głośności na ekranie głównym wyświetlany jest teraz w skali -49dB…+49dB zamiast surowej wartości 0-63 (logika regulacji bez zmian).
+- Motyw kolorystyczny wybrany w USTAWIENIA → UŻYTKOWE jest teraz stosowany na żywo, w trakcie przeglądania ustawień, a nie dopiero po wyjściu z menu.
+- Logo na ekranie INFO (informacje systemowe) jest teraz przyciemnione, tak jak na ekranie startowym — nie zaburza już czytelności napisów na różnych motywach.
+- Napisy na ekranie startowym mają teraz cienki kontur zamiast pełnego czarnego tła pod tekstem.
+
+**Poprawiono**
+
+- Usunięto gradientowe tło ekranu SETUP, które kolidowało z różnymi motywami kolorystycznymi i zostawiało widoczne resztki wokół pól ustawień.
+- Kafelek częstotliwości poprawnie wraca do normalnego widoku po zmianie głośności, squelchu lub tłumika RF, jeśli wartość finalnie się nie zmieniła.
+- Wskaźnik VFO A/B oraz AGC jest poprawnie odświeżany po zakończeniu SEEK — napis „AUTO >>>>” nie zasłania go już na stałe.
+- Poprawiono układ przycisków ekranu głównego (dopasowany osobno do orientacji pionowej i poziomej urządzenia).
 
 ---
 

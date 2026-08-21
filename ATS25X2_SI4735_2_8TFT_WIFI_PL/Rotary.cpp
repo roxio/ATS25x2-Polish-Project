@@ -117,22 +117,24 @@ const unsigned char ttable[7][4] = {
 #endif
 
 // Constructor. Each arg is the pin number for each encoder contact
-Rotary::Rotary(char _pin1, char _pin2) {
+Rotary::Rotary(uint8_t _pin1, uint8_t _pin2) {
   // Assign variables
   pin1 = _pin1;
   pin2 = _pin2;
-  // Set pins to input.
+  // Set pins to input. Na ESP32 "pinMode(INPUT) + digitalWrite(HIGH)" nie
+  // wlacza podciagniecia (to sposob z AVR) - trzeba wprost INPUT_PULLUP.
+#ifdef ENABLE_PULLUPS
+  pinMode(pin1, INPUT_PULLUP);
+  pinMode(pin2, INPUT_PULLUP);
+#else
   pinMode(pin1, INPUT);
   pinMode(pin2, INPUT);
-#ifdef ENABLE_PULLUPS
-  digitalWrite(pin1, HIGH);
-  digitalWrite(pin2, HIGH);
 #endif
   // Initialise state
   state = R_START;
 }
 
-unsigned char Rotary::process() {
+unsigned char IRAM_ATTR Rotary::process() {
   // Grab state of input pins
   unsigned char pinstate = (digitalRead(pin2) << 1) | digitalRead(pin1);
   // Determine new state from the pins and state table
